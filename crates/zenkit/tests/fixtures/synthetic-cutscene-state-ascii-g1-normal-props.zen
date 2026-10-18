@@ -1,0 +1,24 @@
+ZenGin Archive
+ver 1
+zCArchiverGeneric
+ASCII
+saveGame 0
+date 15.10.2026 12:34:56
+user fixtureÿ
+END
+objects 1
+END
+
+[props zCCSProps 0 0]
+name=string:PROPSü
+globalCutscene=bool:1
+csLoop=bool:0
+hasToBeTriggerd=bool:1
+distance=float:123.25
+range=float:456.5
+numLockedBlocks=int:-5
+runBehaviour=enum:2
+runBehaviourValue=int:-11
+StageName=string:STAGEû
+scriptFuncOnStop=string:STOPú
+[]

@@ -1,0 +1,13 @@
+* text=auto eol=lf
+# Fixtures are byte-exact.
+crates/zenkit/tests/fixtures/** -text
+# Material string payloads deliberately test preservation of trailing spaces.
+crates/zenkit/tests/fixtures/synthetic-material-ascii-*.zen whitespace=-blank-at-eol
+crates/zenkit/tests/fixtures/synthetic-material-record-ascii-*.mat whitespace=-blank-at-eol
+crates/zenkit/tests/fixtures/synthetic-material-early-ascii-*.zen whitespace=-blank-at-eol
+crates/zenkit/tests/fixtures/synthetic-material-record-early-ascii-*.mat whitespace=-blank-at-eol
+crates/zenkit/tests/fixtures/synthetic-cutscene-state-ascii-g*-stage-material-library.zen whitespace=-blank-at-eol
+crates/zenkit/tests/fixtures/synthetic-cutscene-ascii-spaces.zen whitespace=-blank-at-eol
+# Light animation strings deliberately retain trailing spaces and tabs.
+crates/zenkit/tests/fixtures/synthetic-vob-special-ascii-*.zen whitespace=-blank-at-eol
+crates/zenkit/tests/fixtures/synthetic-light-preset-ascii-*.zen whitespace=-blank-at-eol

@@ -1,0 +1,46 @@
+ZenGin Archive
+ver 1
+zCArchiverGeneric
+ASCII
+saveGame 1
+date 15.10.2026 12:34:56
+user fixtureÿ
+END
+objects 2
+END
+
+[frame zCCamTrj_KeyFrame:zCVob 52224 0]
+pack=int:1
+dataRaw=raw:000080bf000000c0000040c0000080400000a0400000c0400000e840000008c100001c410000803f0000004000004040000080400000a0400000c0400000e0400000004100002041754c400000a03f0000403f
+visual=string:DECALý.TGA
+[visual zCDecal 0 1]
+name=string:DECALý.TGA
+decalDim=rawFloat:32.5 64.25
+decalOffset=rawFloat:-1.25 2.5
+decal2Sided=bool:1
+decalAlphaFunc=enum:3
+decalTexAniFPS=float:12.5
+decalAlphaWeight=int:173
+ignoreDayLight=bool:1
+[]
+sleepMode=int:2
+nextOnTimer=float:12.5
+vel=vec3:1.5 -2.25 3.75
+mode=int:7
+gravOn=bool:1
+gravScale=float:0.625
+slideDir=vec3:-4.5 5.25 -6.75
+time=float:1.25
+angleRollDeg=float:-12.5
+camFOVScale=float:0.875
+motionType=enum:6
+motionTypeFOV=enum:2
+motionTypeRoll=enum:3
+motionTypeTimeScale=enum:4
+tension=float:-0.25
+bias=float:0.375
+continuity=float:-0.625
+timeScale=float:1.5
+timeIsFixed=bool:1
+originalPose=raw:000000804523c17f0000803f00000000010000005634c2ff000080bfffff7f7f0000807fffff7f000000803effff7fff000080ff00008000000000400000003f
+[]

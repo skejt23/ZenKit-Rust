@@ -1,0 +1,33 @@
+ZenGin Archive
+ver 1
+zCArchiverGeneric
+ASCII
+saveGame 1
+date 15.10.2026 12:34:56
+user fixtureÿ
+END
+objects 2
+END
+
+[vob zCVob 12289 0]
+pack=int:1
+dataRaw=raw:000080bf000000c0000040c0000080400000a0400000c0400000e840000008c100001c410000803f0000004000004040000080400000a0400000c0400000e0400000004100002041754f
+presetName=string:PRESETÿ
+vobName=string:VOBþ
+visual=string:DECALý.TGA
+[visual zCDecal 0 1]
+name=string:DECALý.TGA
+decalDim=rawFloat:32.5 64.25
+decalOffset=rawFloat:-1.25 2.5
+decal2Sided=bool:1
+decalAlphaFunc=enum:3
+decalTexAniFPS=float:12.5
+[]
+sleepMode=int:2
+nextOnTimer=float:12.5
+vel=vec3:1.5 -2.25 3.75
+mode=int:7
+gravOn=bool:1
+gravScale=float:0.625
+slideDir=vec3:-4.5 5.25 -6.75
+[]

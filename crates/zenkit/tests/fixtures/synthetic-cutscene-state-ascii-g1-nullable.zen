@@ -1,0 +1,92 @@
+ZenGin Archive
+ver 1
+zCArchiverGeneric
+ASCII
+saveGame 1
+date 15.10.2026 12:34:56
+user fixtureÿ
+END
+objects 10
+END
+
+[player oCCSPlayer:zCCSPlayer 0 0]
+lastProcessDay=int:-3
+lastProcessHour=int:17
+playListCount=int:3
+[context0 zCCSCutsceneContext:zCCutscene:zCCSBlock 0 1]
+blockName=string:CONTEXTÿ
+numOfBlocks=int:1
+subBlock0=float:0.375
+[content zCCSBlock 0 2]
+blockName=string:BLOCKþ
+numOfBlocks=int:1
+subBlock0=float:-1.25
+[nested zCCSAtomicBlock 0 3]
+[message oCMsgConversation:oCNpcMessage:zCEventMessage 0 4]
+subType=enum:2
+highPriority=bool:1
+inUse=bool:0
+deleted=bool:1
+text=string:Synthetic runtime line ÿ
+name=string:STATEý.WAV
+[]
+[]
+[]
+[properties % 0 0]
+[]
+numOfRoles=int:-3
+numOfRoleVobs=int:17
+[actor % 0 0]
+[]
+[mainRoleVob % 0 0]
+[]
+isCutscene=bool:1
+reference=int:-7
+actualBlock=int:23
+[alternate % 0 0]
+[]
+[stage % 0 0]
+[]
+wasTriggered=bool:0
+[]
+[emptyContext % 0 0]
+[]
+[contextAlias § 0 1]
+[]
+[]
+[scene zCCutscene:zCCSBlock 0 5]
+blockName=string:SCENEù
+numOfBlocks=int:1
+subBlock0=float:2.5
+[sceneContent § 0 2]
+[]
+[]
+[manager oCCSManager:zCCSManager 0 6]
+poolCount=int:4
+[pool0 zCCSPoolItem 0 7]
+itemName=string:POOL_Aø
+runBehaviour=enum:1
+runBehaviourValue=int:7
+numPlayed=int:13
+deactivated=int:-2
+flags=int:74565
+[]
+[emptyPool % 0 0]
+[]
+[poolAlias § 0 7]
+[]
+[pool1 zCCSPoolItem 0 8]
+itemName=string:POOL_B÷
+runBehaviour=enum:2
+runBehaviourValue=int:-3
+numPlayed=int:-5
+deactivated=int:4
+flags=int:-17
+[]
+[]
+[events zCEventManager 0 9]
+cleared=bool:1
+active=bool:0
+[emCutscene § 0 1]
+[]
+[]

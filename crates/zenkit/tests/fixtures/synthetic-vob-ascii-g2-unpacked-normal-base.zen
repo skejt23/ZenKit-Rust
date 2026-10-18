@@ -1,0 +1,43 @@
+ZenGin Archive
+ver 1
+zCArchiverGeneric
+ASCII
+saveGame 0
+date 15.10.2026 12:34:56
+user fixtureÿ
+END
+objects 2
+END
+
+[vob zCVob 52224 0]
+pack=int:0
+presetName=string:PRESETÿ
+bbox3DWS=rawFloat:-1 -2 -3 4 5 6
+trafoOSToWSRot=raw:0000803f0000004000004040000080400000a0400000c0400000e0400000004100002041
+trafoOSToWSPos=vec3:7.25 -8.5 9.75
+vobName=string:VOBþ
+visual=string:DECALý.TGA
+showVisual=bool:1
+visualCamAlign=enum:2
+visualAniMode=enum:3
+visualAniModeStrength=float:1.25
+vobFarClipZScale=float:0.75
+cdStatic=bool:0
+cdDyn=bool:1
+staticVob=bool:1
+dynShadow=enum:1
+zbias=int:17
+isAmbient=bool:1
+[visual zCDecal 0 1]
+name=string:DECALý.TGA
+decalDim=rawFloat:32.5 64.25
+decalOffset=rawFloat:-1.25 2.5
+decal2Sided=bool:1
+decalAlphaFunc=enum:3
+decalTexAniFPS=float:12.5
+decalAlphaWeight=int:173
+ignoreDayLight=bool:1
+[]
+[ai % 0 0]
+[]
+[]

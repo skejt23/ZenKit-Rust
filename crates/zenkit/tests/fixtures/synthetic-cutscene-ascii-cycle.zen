@@ -1,0 +1,26 @@
+ZenGin Archive
+ver 1
+zCArchiverGeneric
+ASCII
+saveGame 0
+date 15.10.2026 00:00:00
+user fixtureÿ
+END
+objects 3
+END
+
+[library zCCSLib 0 0]
+NumOfItems=int:1
+[% zCCSBlock 0 1]
+blockName=string:ALPHA
+numOfBlocks=int:1
+subBlock0=float:0.0
+[% zCCSBlock 0 2]
+blockName=string:INNERþ
+numOfBlocks=int:1
+subBlock0=float:0.0
+[% § 0 1]
+[]
+[]
+[]
+[]

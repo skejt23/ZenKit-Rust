@@ -1,0 +1,344 @@
+ZenGin Archive
+ver 1
+zCArchiverGeneric
+ASCII
+saveGame 1
+date 15.10.2026 12:34:56
+user fixtureÿ
+END
+objects 13
+END
+
+[mob oCMOB:zCVob 47105 0]
+pack=int:1
+dataRaw=raw:000080bf000000c0000040c0000080400000a0400000c0400000e840000008c100001c410000803f0000004000004040000080400000a0400000c0400000e0400000004100002041754c
+visual=string:DECALý.TGA
+[visual zCDecal 0 1]
+name=string:DECALý.TGA
+decalDim=rawFloat:32.5 64.25
+decalOffset=rawFloat:-1.25 2.5
+decal2Sided=bool:1
+decalAlphaFunc=enum:3
+decalTexAniFPS=float:12.5
+[]
+sleepMode=int:2
+nextOnTimer=float:12.5
+vel=vec3:1.5 -2.25 3.75
+mode=int:7
+gravOn=bool:1
+gravScale=float:0.625
+slideDir=vec3:-4.5 5.25 -6.75
+focusName=string:MOB_FOCUSÿ
+hitpoints=int:123
+damage=int:-7
+moveable=bool:1
+takeable=bool:1
+focusOverride=bool:0
+soundMaterial=enum:4
+visualDestroyed=string:BROKENþ.3DS
+owner=string:OWNERý
+ownerGuild=string:GUILDü
+isDestroyed=bool:1
+[]
+[mob oCMobInter:oCMOB:zCVob 35585 2]
+pack=int:1
+dataRaw=raw:000080bf000000c0000040c0000080400000a0400000c0400000e840000008c100001c410000803f0000004000004040000080400000a0400000c0400000e0400000004100002041754c
+visual=string:DECALý.TGA
+[visual § 0 1]
+[]
+sleepMode=int:2
+nextOnTimer=float:12.5
+vel=vec3:1.5 -2.25 3.75
+mode=int:7
+gravOn=bool:1
+gravScale=float:0.625
+slideDir=vec3:-4.5 5.25 -6.75
+focusName=string:MOB_FOCUSÿ
+hitpoints=int:123
+damage=int:-7
+moveable=bool:1
+takeable=bool:1
+focusOverride=bool:0
+soundMaterial=enum:4
+visualDestroyed=string:BROKENþ.3DS
+owner=string:OWNERý
+ownerGuild=string:GUILDü
+isDestroyed=bool:1
+stateNum=int:-3
+triggerTarget=string:TARGETû
+useWithItem=string:USE_ITEMú
+conditionFunc=string:CONDù
+onStateFunc=string:STATEø
+rewind=bool:1
+[]
+[mob oCMobFire:oCMobInter:oCMOB:zCVob 18433 3]
+pack=int:1
+dataRaw=raw:000080bf000000c0000040c0000080400000a0400000c0400000e840000008c100001c410000803f0000004000004040000080400000a0400000c0400000e0400000004100002041754c
+visual=string:DECALý.TGA
+[visual § 0 1]
+[]
+sleepMode=int:2
+nextOnTimer=float:12.5
+vel=vec3:1.5 -2.25 3.75
+mode=int:7
+gravOn=bool:1
+gravScale=float:0.625
+slideDir=vec3:-4.5 5.25 -6.75
+focusName=string:MOB_FOCUSÿ
+hitpoints=int:123
+damage=int:-7
+moveable=bool:1
+takeable=bool:1
+focusOverride=bool:0
+soundMaterial=enum:4
+visualDestroyed=string:BROKENþ.3DS
+owner=string:OWNERý
+ownerGuild=string:GUILDü
+isDestroyed=bool:1
+stateNum=int:-3
+triggerTarget=string:TARGETû
+useWithItem=string:USE_ITEMú
+conditionFunc=string:CONDù
+onStateFunc=string:STATEø
+rewind=bool:1
+fireSlot=string:BIP_FIRE÷
+fireVobtreeName=string:FIRE_TREEö.ZEN
+[]
+[mob oCMobContainer:oCMobInter:oCMOB:zCVob 64513 4]
+pack=int:1
+dataRaw=raw:000080bf000000c0000040c0000080400000a0400000c0400000e840000008c100001c410000803f0000004000004040000080400000a0400000c0400000e0400000004100002041754c
+visual=string:DECALý.TGA
+[visual § 0 1]
+[]
+sleepMode=int:2
+nextOnTimer=float:12.5
+vel=vec3:1.5 -2.25 3.75
+mode=int:7
+gravOn=bool:1
+gravScale=float:0.625
+slideDir=vec3:-4.5 5.25 -6.75
+focusName=string:MOB_FOCUSÿ
+hitpoints=int:123
+damage=int:-7
+moveable=bool:1
+takeable=bool:1
+focusOverride=bool:0
+soundMaterial=enum:4
+visualDestroyed=string:BROKENþ.3DS
+owner=string:OWNERý
+ownerGuild=string:GUILDü
+isDestroyed=bool:1
+stateNum=int:-3
+triggerTarget=string:TARGETû
+useWithItem=string:USE_ITEMú
+conditionFunc=string:CONDù
+onStateFunc=string:STATEø
+rewind=bool:1
+locked=bool:1
+keyInstance=string:KEYõ
+pickLockStr=string:LRRLLô
+contains=string:ITEM_A:2,ITEM_B:3ó
+NumOfEntries=int:4
+[item0 oCItem:zCVob 0 5]
+pack=int:1
+dataRaw=raw:000080bf000000c0000040c0000080400000a0400000c0400000e840000008c100001c410000803f0000004000004040000080400000a0400000c0400000e0400000004100002041755c
+visual=string:DECALý.TGA
+[visual § 0 1]
+[]
+[ai oCAIVobMove 0 6]
+[vob § 0 4]
+[]
+[owner % 0 0]
+[]
+[]
+sleepMode=int:2
+nextOnTimer=float:12.5
+vel=vec3:1.5 -2.25 3.75
+mode=int:7
+gravOn=bool:1
+gravScale=float:0.625
+slideDir=vec3:-4.5 5.25 -6.75
+itemInstance=string:ITMIÿ_TEST
+amount=int:17
+flags=int:1026
+[]
+[empty % 0 0]
+[]
+[itemAlias § 0 5]
+[]
+[item1 oCItem:zCVob 0 7]
+pack=int:1
+dataRaw=raw:000080bf000000c0000040c0000080400000a0400000c0400000e840000008c100001c410000803f0000004000004040000080400000a0400000c0400000e0400000004100002041754c
+visual=string:DECALý.TGA
+[visual § 0 1]
+[]
+sleepMode=int:2
+nextOnTimer=float:12.5
+vel=vec3:1.5 -2.25 3.75
+mode=int:7
+gravOn=bool:1
+gravScale=float:0.625
+slideDir=vec3:-4.5 5.25 -6.75
+itemInstance=string:ITMI_OTHERþ
+amount=int:3
+flags=int:512
+[]
+[]
+[mob oCMobDoor:oCMobInter:oCMOB:zCVob 64513 8]
+pack=int:1
+dataRaw=raw:000080bf000000c0000040c0000080400000a0400000c0400000e840000008c100001c410000803f0000004000004040000080400000a0400000c0400000e0400000004100002041754c
+visual=string:DECALý.TGA
+[visual § 0 1]
+[]
+sleepMode=int:2
+nextOnTimer=float:12.5
+vel=vec3:1.5 -2.25 3.75
+mode=int:7
+gravOn=bool:1
+gravScale=float:0.625
+slideDir=vec3:-4.5 5.25 -6.75
+focusName=string:MOB_FOCUSÿ
+hitpoints=int:123
+damage=int:-7
+moveable=bool:1
+takeable=bool:1
+focusOverride=bool:0
+soundMaterial=enum:4
+visualDestroyed=string:BROKENþ.3DS
+owner=string:OWNERý
+ownerGuild=string:GUILDü
+isDestroyed=bool:1
+stateNum=int:-3
+triggerTarget=string:TARGETû
+useWithItem=string:USE_ITEMú
+conditionFunc=string:CONDù
+onStateFunc=string:STATEø
+rewind=bool:1
+locked=bool:1
+keyInstance=string:KEYõ
+pickLockStr=string:LRRLLô
+[]
+[mob oCMobLadder:oCMobInter:oCMOB:zCVob 35585 9]
+pack=int:1
+dataRaw=raw:000080bf000000c0000040c0000080400000a0400000c0400000e840000008c100001c410000803f0000004000004040000080400000a0400000c0400000e0400000004100002041754c
+visual=string:DECALý.TGA
+[visual § 0 1]
+[]
+sleepMode=int:2
+nextOnTimer=float:12.5
+vel=vec3:1.5 -2.25 3.75
+mode=int:7
+gravOn=bool:1
+gravScale=float:0.625
+slideDir=vec3:-4.5 5.25 -6.75
+focusName=string:MOB_FOCUSÿ
+hitpoints=int:123
+damage=int:-7
+moveable=bool:1
+takeable=bool:1
+focusOverride=bool:0
+soundMaterial=enum:4
+visualDestroyed=string:BROKENþ.3DS
+owner=string:OWNERý
+ownerGuild=string:GUILDü
+isDestroyed=bool:1
+stateNum=int:-3
+triggerTarget=string:TARGETû
+useWithItem=string:USE_ITEMú
+conditionFunc=string:CONDù
+onStateFunc=string:STATEø
+rewind=bool:1
+[]
+[mob oCMobSwitch:oCMobInter:oCMOB:zCVob 35585 10]
+pack=int:1
+dataRaw=raw:000080bf000000c0000040c0000080400000a0400000c0400000e840000008c100001c410000803f0000004000004040000080400000a0400000c0400000e0400000004100002041754c
+visual=string:DECALý.TGA
+[visual § 0 1]
+[]
+sleepMode=int:2
+nextOnTimer=float:12.5
+vel=vec3:1.5 -2.25 3.75
+mode=int:7
+gravOn=bool:1
+gravScale=float:0.625
+slideDir=vec3:-4.5 5.25 -6.75
+focusName=string:MOB_FOCUSÿ
+hitpoints=int:123
+damage=int:-7
+moveable=bool:1
+takeable=bool:1
+focusOverride=bool:0
+soundMaterial=enum:4
+visualDestroyed=string:BROKENþ.3DS
+owner=string:OWNERý
+ownerGuild=string:GUILDü
+isDestroyed=bool:1
+stateNum=int:-3
+triggerTarget=string:TARGETû
+useWithItem=string:USE_ITEMú
+conditionFunc=string:CONDù
+onStateFunc=string:STATEø
+rewind=bool:1
+[]
+[mob oCMobWheel:oCMobInter:oCMOB:zCVob 35585 11]
+pack=int:1
+dataRaw=raw:000080bf000000c0000040c0000080400000a0400000c0400000e840000008c100001c410000803f0000004000004040000080400000a0400000c0400000e0400000004100002041754c
+visual=string:DECALý.TGA
+[visual § 0 1]
+[]
+sleepMode=int:2
+nextOnTimer=float:12.5
+vel=vec3:1.5 -2.25 3.75
+mode=int:7
+gravOn=bool:1
+gravScale=float:0.625
+slideDir=vec3:-4.5 5.25 -6.75
+focusName=string:MOB_FOCUSÿ
+hitpoints=int:123
+damage=int:-7
+moveable=bool:1
+takeable=bool:1
+focusOverride=bool:0
+soundMaterial=enum:4
+visualDestroyed=string:BROKENþ.3DS
+owner=string:OWNERý
+ownerGuild=string:GUILDü
+isDestroyed=bool:1
+stateNum=int:-3
+triggerTarget=string:TARGETû
+useWithItem=string:USE_ITEMú
+conditionFunc=string:CONDù
+onStateFunc=string:STATEø
+rewind=bool:1
+[]
+[mob oCMobBed:oCMobInter:oCMOB:zCVob 61440 12]
+pack=int:1
+dataRaw=raw:000080bf000000c0000040c0000080400000a0400000c0400000e840000008c100001c410000803f0000004000004040000080400000a0400000c0400000e0400000004100002041754c
+visual=string:DECALý.TGA
+[visual § 0 1]
+[]
+sleepMode=int:2
+nextOnTimer=float:12.5
+vel=vec3:1.5 -2.25 3.75
+mode=int:7
+gravOn=bool:1
+gravScale=float:0.625
+slideDir=vec3:-4.5 5.25 -6.75
+focusName=string:MOB_FOCUSÿ
+hitpoints=int:123
+damage=int:-7
+moveable=bool:1
+takeable=bool:1
+focusOverride=bool:0
+soundMaterial=enum:4
+visualDestroyed=string:BROKENþ.3DS
+owner=string:OWNERý
+ownerGuild=string:GUILDü
+isDestroyed=bool:1
+stateNum=int:-3
+triggerTarget=string:TARGETû
+useWithItem=string:USE_ITEMú
+conditionFunc=string:CONDù
+onStateFunc=string:STATEø
+rewind=bool:1
+[]

@@ -1,0 +1,38 @@
+ZenGin Archive
+ver 1
+zCArchiverGeneric
+ASCII
+saveGame 0
+date 14.10.2026 12:34:56
+user fixtureÿ
+END
+objects 0000000001
+END
+
+[material zCMaterial 24578 0]
+name=string:STONEÿ
+matGroup=enum:2
+color=color:17 34 51 204
+smoothAngle=float:56.25
+texture=string:BRICKþ.TGA
+texScale=string: 512.125  -64.5 
+texAniFPS=float:12.5
+texAniMapMode=enum:1
+texAniMapDir=string:0.125 -0.375
+noCollDet=bool:1
+noLightmap=bool:0
+lodDontCollapse=bool:1
+detailObject=string:DETAILý.3DS
+detailObjectScale=float:1.75
+forceOccluder=bool:1
+environmentalMapping=bool:1
+environmentalMappingStrength=float:0.625
+waveMode=enum:7
+waveSpeed=enum:3
+waveMaxAmplitude=float:30.25
+waveGridSize=float:100.5
+ignoreSunLight=bool:1
+defaultMapping=rawFloat:2.34375 -1.125
+[]
+[alias § 0 0]
+[]

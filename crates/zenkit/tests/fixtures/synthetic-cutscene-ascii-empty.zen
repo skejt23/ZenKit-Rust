@@ -1,0 +1,14 @@
+ZenGin Archive
+ver 1
+zCArchiverGeneric
+ASCII
+saveGame 0
+date 15.10.2026 00:00:00
+user fixtureÿ
+END
+objects 1
+END
+
+[library zCCSLib 0 0]
+NumOfItems=int:0
+[]

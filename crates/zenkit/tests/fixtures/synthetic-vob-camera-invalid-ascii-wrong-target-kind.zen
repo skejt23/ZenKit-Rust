@@ -1,0 +1,150 @@
+ZenGin Archive
+ver 1
+zCArchiverGeneric
+ASCII
+saveGame 1
+date 15.10.2026 12:34:56
+user fixtureÿ
+END
+objects 6
+END
+
+[camera zCCSCamera:zCVob 33793 0]
+pack=int:1
+dataRaw=raw:000080bf000000c0000040c0000080400000a0400000c0400000e840000008c100001c410000803f0000004000004040000080400000a0400000c0400000e0400000004100002041754c400000a03f0000403f
+visual=string:DECALý.TGA
+[visual zCDecal 0 1]
+name=string:DECALý.TGA
+decalDim=rawFloat:32.5 64.25
+decalOffset=rawFloat:-1.25 2.5
+decal2Sided=bool:1
+decalAlphaFunc=enum:3
+decalTexAniFPS=float:12.5
+decalAlphaWeight=int:173
+ignoreDayLight=bool:1
+[]
+sleepMode=int:2
+nextOnTimer=float:12.5
+vel=vec3:1.5 -2.25 3.75
+mode=int:7
+gravOn=bool:1
+gravScale=float:0.625
+slideDir=vec3:-4.5 5.25 -6.75
+camTrjFOR=enum:1
+targetTrjFOR=enum:0
+loopMode=enum:2
+splLerpMode=enum:3
+ignoreFORVobRotCam=bool:1
+ignoreFORVobRotTarget=bool:0
+adaptToSurroundings=bool:1
+easeToFirstKey=bool:0
+easeFromLastKey=bool:1
+totalTime=float:12.5
+autoCamFocusVobName=string:FOCUSÿ
+autoCamPlayerMovable=bool:0
+autoCamUntriggerOnLastKey=bool:1
+autoCamUntriggerOnLastKeyDelay=float:0.625
+numPos=int:4
+numTargets=int:3
+[position0 zCCamTrj_KeyFrame:zCVob 52224 2]
+pack=int:1
+dataRaw=raw:000080bf000000c0000040c0000080400000a0400000c0400000e840000008c100001c410000803f0000004000004040000080400000a0400000c0400000e0400000004100002041755c400000a03f0000403f
+visual=string:DECALý.TGA
+[visual § 0 1]
+[]
+[ai oCAIVobMove 0 3]
+[vob § 0 0]
+[]
+[owner % 0 0]
+[]
+[]
+sleepMode=int:2
+nextOnTimer=float:12.5
+vel=vec3:1.5 -2.25 3.75
+mode=int:7
+gravOn=bool:1
+gravScale=float:0.625
+slideDir=vec3:-4.5 5.25 -6.75
+time=float:1.25
+angleRollDeg=float:-12.5
+camFOVScale=float:0.875
+motionType=enum:6
+motionTypeFOV=enum:2
+motionTypeRoll=enum:3
+motionTypeTimeScale=enum:4
+tension=float:-0.25
+bias=float:0.375
+continuity=float:-0.625
+timeScale=float:1.5
+timeIsFixed=bool:1
+originalPose=raw:0000803f0000004000004040000080400000a0400000c0400000e040000000410000104100002041000030410000404100005041000060410000704100008041
+[]
+[emptyPosition % 0 0]
+[]
+[position1 zCCamTrj_KeyFrame:zCVob 52224 4]
+pack=int:1
+dataRaw=raw:000080bf000000c0000040c0000080400000a0400000c0400000e840000008c100001c410000803f0000004000004040000080400000a0400000c0400000e0400000004100002041754c400000a03f0000403f
+visual=string:DECALý.TGA
+[visual § 0 1]
+[]
+sleepMode=int:2
+nextOnTimer=float:12.5
+vel=vec3:1.5 -2.25 3.75
+mode=int:7
+gravOn=bool:1
+gravScale=float:0.625
+slideDir=vec3:-4.5 5.25 -6.75
+time=float:3.25
+angleRollDeg=float:-11.5
+camFOVScale=float:1.0
+motionType=enum:6
+motionTypeFOV=enum:2
+motionTypeRoll=enum:3
+motionTypeTimeScale=enum:4
+tension=float:-0.25
+bias=float:0.375
+continuity=float:-0.625
+timeScale=float:1.5
+timeIsFixed=bool:1
+originalPose=raw:0000a8410000b0410000b8410000c0410000c8410000d0410000d8410000e0410000e8410000f0410000f84100000042000004420000084200000c4200001042
+[]
+[positionAlias § 0 2]
+[]
+[target0 § 0 4]
+[]
+[targetAlias § 0 2]
+[]
+[emptyTarget § 0 0]
+[]
+paused=bool:1
+started=bool:0
+gotoTimeMode=bool:1
+csTime=float:7.75
+[]
+[frame zCCamTrj_KeyFrame:zCVob 52224 5]
+pack=int:1
+dataRaw=raw:000080bf000000c0000040c0000080400000a0400000c0400000e840000008c100001c410000803f0000004000004040000080400000a0400000c0400000e0400000004100002041754c400000a03f0000403f
+visual=string:DECALý.TGA
+[visual § 0 1]
+[]
+sleepMode=int:2
+nextOnTimer=float:12.5
+vel=vec3:1.5 -2.25 3.75
+mode=int:7
+gravOn=bool:1
+gravScale=float:0.625
+slideDir=vec3:-4.5 5.25 -6.75
+time=float:5.25
+angleRollDeg=float:-10.5
+camFOVScale=float:1.125
+motionType=enum:6
+motionTypeFOV=enum:2
+motionTypeRoll=enum:3
+motionTypeTimeScale=enum:4
+tension=float:-0.25
+bias=float:0.375
+continuity=float:-0.625
+timeScale=float:1.5
+timeIsFixed=bool:1
+originalPose=raw:000024420000284200002c4200003042000034420000384200003c4200004042000044420000484200004c4200005042000054420000584200005c4200006042
+[]

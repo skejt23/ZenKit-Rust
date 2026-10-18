@@ -1,0 +1,92 @@
+ZenGin Archive
+ver 1
+zCArchiverGeneric
+ASCII
+saveGame 1
+date 15.10.2026 12:34:56
+user fixtureÿ
+END
+objects 5
+END
+
+before=int:-701
+[vob zCVob 52224 0]
+pack=int:1
+dataRaw=raw:000080bf000000c0000040c0000080400000a0400000c0400000e840000008c100001c410000803f0000004000004040000080400000a0400000c0400000e0400000004100002041754c400000a03f0000403f
+visual=string:DECALý.TGA
+[visual zCDecal 0 1]
+name=string:DECALý.TGA
+decalDim=rawFloat:32.5 64.25
+decalOffset=rawFloat:-1.25 2.5
+decal2Sided=bool:1
+decalAlphaFunc=enum:3
+decalTexAniFPS=float:12.5
+decalAlphaWeight=int:173
+ignoreDayLight=bool:1
+[]
+sleepMode=int:2
+nextOnTimer=float:12.5
+vel=vec3:1.5 -2.25 3.75
+mode=int:7
+gravOn=bool:1
+gravScale=float:0.625
+slideDir=vec3:-4.5 5.25 -6.75
+[]
+[vob zCVob 52224 2]
+pack=int:1
+dataRaw=raw:000080bf000000c0000040c0000080400000a0400000c0400000a2410000f4c1000023420000803f0000004000004040000080400000a0400000c0400000e0400000004100002041754c400000a03f0000403f
+visual=string:DECALý.TGA
+[visual § 0 1]
+[]
+sleepMode=int:2
+nextOnTimer=float:12.5
+vel=vec3:1.5 -2.25 3.75
+mode=int:7
+gravOn=bool:1
+gravScale=float:0.625
+slideDir=vec3:-4.5 5.25 -6.75
+[]
+childs0=int:2
+[vob § 0 0]
+[]
+childs1=int:0
+[vob zCVob 52224 3]
+pack=int:1
+dataRaw=raw:000080bf000000c0000040c0000080400000a0400000c0400000aa410000fcc1000027420000803f0000004000004040000080400000a0400000c0400000e0400000004100002041754c400000a03f0000403f
+visual=string:DECALý.TGA
+[visual § 0 1]
+[]
+sleepMode=int:2
+nextOnTimer=float:12.5
+vel=vec3:1.5 -2.25 3.75
+mode=int:7
+gravOn=bool:1
+gravScale=float:0.625
+slideDir=vec3:-4.5 5.25 -6.75
+[]
+childs2=int:1
+[vob § 0 0]
+[]
+childs3=int:0
+between=int:812
+[vob zCVob 52224 4]
+pack=int:1
+dataRaw=raw:000080bf000000c0000040c0000080400000a0400000c0400000b241000002c200002b420000803f0000004000004040000080400000a0400000c0400000e0400000004100002041754c400000a03f0000403f
+visual=string:DECALý.TGA
+[visual § 0 1]
+[]
+sleepMode=int:2
+nextOnTimer=float:12.5
+vel=vec3:1.5 -2.25 3.75
+mode=int:7
+gravOn=bool:1
+gravScale=float:0.625
+slideDir=vec3:-4.5 5.25 -6.75
+[]
+childs0=int:1
+[vob § 0 0]
+[]
+childs1=int:0
+[vob § 0 0]
+[]
+after=int:-913

@@ -1,0 +1,247 @@
+ZenGin Archive
+ver 1
+zCArchiverGeneric
+ASCII
+saveGame 0
+date 15.10.2026 12:34:56
+user fixtureÿ
+END
+objects 20
+END
+
+[special zCVobAnimate:zCVob 12289 0]
+pack=int:1
+dataRaw=raw:000080bf000000c0000040c0000080400000a0400000c0400000e840000008c100001c410000803f0000004000004040000080400000a0400000c0400000e0400000004100002041750c
+visual=string:DECALý.TGA
+[visual zCDecal 0 1]
+name=string:DECALý.TGA
+decalDim=rawFloat:32.5 64.25
+decalOffset=rawFloat:-1.25 2.5
+decal2Sided=bool:1
+decalAlphaFunc=enum:3
+decalTexAniFPS=float:12.5
+[]
+startOn=bool:1
+[]
+[special oCItem:zCVob 0 2]
+pack=int:1
+dataRaw=raw:000080bf000000c0000040c0000080400000a0400000c0400000e840000008c100001c410000803f0000004000004040000080400000a0400000c0400000e0400000004100002041750c
+visual=string:DECALý.TGA
+[visual § 0 1]
+[]
+itemInstance=string:ITMIÿ_TEST
+[]
+[special zCVobLensFlare:zCVob 64704 3]
+pack=int:1
+dataRaw=raw:000080bf000000c0000040c0000080400000a0400000c0400000e840000008c100001c410000803f0000004000004040000080400000a0400000c0400000e0400000004100002041750c
+visual=string:DECALý.TGA
+[visual § 0 1]
+[]
+lensflareFX=string:FLAREþ
+[]
+[special zCPFXControler:zCVob 12289 4]
+pack=int:1
+dataRaw=raw:000080bf000000c0000040c0000080400000a0400000c0400000e840000008c100001c410000803f0000004000004040000080400000a0400000c0400000e0400000004100002041750c
+visual=string:DECALý.TGA
+[visual § 0 1]
+[]
+pfxName=string:FIREþ
+killVobWhenDone=bool:1
+pfxStartOn=bool:0
+[]
+[special zCMessageFilter:zCVob 0 5]
+pack=int:1
+dataRaw=raw:000080bf000000c0000040c0000080400000a0400000c0400000e840000008c100001c410000803f0000004000004040000080400000a0400000c0400000e0400000004100002041750c
+visual=string:DECALý.TGA
+[visual § 0 1]
+[]
+triggerTarget=string:TARGETý
+onTrigger=enum:2
+onUntrigger=enum:3
+[]
+[special zCMoverControler:zCVob 0 6]
+pack=int:1
+dataRaw=raw:000080bf000000c0000040c0000080400000a0400000c0400000e840000008c100001c410000803f0000004000004040000080400000a0400000c0400000e0400000004100002041750c
+visual=string:DECALý.TGA
+[visual § 0 1]
+[]
+triggerTarget=string:TARGETý
+moverMessage=enum:3
+gotoFixedKey=int:-7
+[]
+[special oCTouchDamage:zCTouchDamage:zCVob 36865 7]
+pack=int:1
+dataRaw=raw:000080bf000000c0000040c0000080400000a0400000c0400000e840000008c100001c410000803f0000004000004040000080400000a0400000c0400000e0400000004100002041750c
+visual=string:DECALý.TGA
+[visual § 0 1]
+[]
+damage=float:125.5
+Barrier=bool:1
+Blunt=bool:0
+Edge=bool:1
+Fire=bool:0
+Fly=bool:1
+Magic=bool:0
+Point=bool:1
+Fall=bool:0
+damageRepeatDelaySec=float:2.25
+damageVolDownScale=float:0.75
+damageCollType=enum:2
+[]
+[special zCEarthquake:zCVob 52224 8]
+pack=int:1
+dataRaw=raw:000080bf000000c0000040c0000080400000a0400000c0400000e840000008c100001c410000803f0000004000004040000080400000a0400000c0400000e0400000004100002041750c
+visual=string:DECALý.TGA
+[visual § 0 1]
+[]
+radius=float:650.25
+timeSec=float:3.5
+amplitudeCM=vec3:-1.25 2.5 3.75
+[]
+[special zCVobScreenFX:zCVob 12289 9]
+pack=int:1
+dataRaw=raw:000080bf000000c0000040c0000080400000a0400000c0400000e840000008c100001c410000803f0000004000004040000080400000a0400000c0400000e0400000004100002041750c
+visual=string:DECALý.TGA
+[visual § 0 1]
+[]
+[]
+[special oCZoneMusic:zCVob 0 10]
+pack=int:1
+dataRaw=raw:000080bf000000c0000040c0000080400000a0400000c0400000e840000008c100001c410000803f0000004000004040000080400000a0400000c0400000e0400000004100002041750c
+visual=string:DECALý.TGA
+[visual § 0 1]
+[]
+enabled=bool:1
+priority=int:-4
+ellipsoid=bool:1
+reverbLevel=float:0.375
+volumeLevel=float:0.625
+loop=bool:0
+[]
+[special oCZoneMusicDefault:oCZoneMusic:zCVob 0 11]
+pack=int:1
+dataRaw=raw:000080bf000000c0000040c0000080400000a0400000c0400000e840000008c100001c410000803f0000004000004040000080400000a0400000c0400000e0400000004100002041750c
+visual=string:DECALý.TGA
+[visual § 0 1]
+[]
+enabled=bool:1
+priority=int:-4
+ellipsoid=bool:1
+reverbLevel=float:0.375
+volumeLevel=float:0.625
+loop=bool:0
+[]
+[special zCZoneVobFarPlane:zCVob 12289 12]
+pack=int:1
+dataRaw=raw:000080bf000000c0000040c0000080400000a0400000c0400000e840000008c100001c410000803f0000004000004040000080400000a0400000c0400000e0400000004100002041750c
+visual=string:DECALý.TGA
+[visual § 0 1]
+[]
+vobFarPlaneZ=float:9000.5
+innerRangePerc=float:0.625
+[]
+[special zCZoneVobFarPlaneDefault:zCZoneVobFarPlane:zCVob 12289 13]
+pack=int:1
+dataRaw=raw:000080bf000000c0000040c0000080400000a0400000c0400000e840000008c100001c410000803f0000004000004040000080400000a0400000c0400000e0400000004100002041750c
+visual=string:DECALý.TGA
+[visual § 0 1]
+[]
+vobFarPlaneZ=float:9000.5
+innerRangePerc=float:0.625
+[]
+[special zCZoneZFog:zCVob 64704 14]
+pack=int:1
+dataRaw=raw:000080bf000000c0000040c0000080400000a0400000c0400000e840000008c100001c410000803f0000004000004040000080400000a0400000c0400000e0400000004100002041750c
+visual=string:DECALý.TGA
+[visual § 0 1]
+[]
+fogRangeCenter=float:7000.25
+innerRangePerc=float:0.375
+fogColor=color:120 71 203 17
+[]
+[special zCZoneZFogDefault:zCZoneZFog:zCVob 64704 15]
+pack=int:1
+dataRaw=raw:000080bf000000c0000040c0000080400000a0400000c0400000e840000008c100001c410000803f0000004000004040000080400000a0400000c0400000e0400000004100002041750c
+visual=string:DECALý.TGA
+[visual § 0 1]
+[]
+fogRangeCenter=float:7000.25
+innerRangePerc=float:0.375
+fogColor=color:120 71 203 17
+[]
+[special zCVobSound:zCVob 12289 16]
+pack=int:1
+dataRaw=raw:000080bf000000c0000040c0000080400000a0400000c0400000e840000008c100001c410000803f0000004000004040000080400000a0400000c0400000e0400000004100002041750c
+visual=string:DECALý.TGA
+[visual § 0 1]
+[]
+sndVolume=float:77.5
+sndMode=enum:2
+sndRandDelay=float:4.25
+sndRandDelayVar=float:0.75
+sndStartOn=bool:1
+sndAmbient3D=bool:0
+sndObstruction=bool:1
+sndConeAngle=float:125.5
+sndVolType=enum:1
+sndRadius=float:800.25
+sndName=string:SOUNDÿ.WAV
+[]
+[special zCVobSoundDaytime:zCVobSound:zCVob 12289 17]
+pack=int:1
+dataRaw=raw:000080bf000000c0000040c0000080400000a0400000c0400000e840000008c100001c410000803f0000004000004040000080400000a0400000c0400000e0400000004100002041750c
+visual=string:DECALý.TGA
+[visual § 0 1]
+[]
+sndVolume=float:77.5
+sndMode=enum:2
+sndRandDelay=float:4.25
+sndRandDelayVar=float:0.75
+sndStartOn=bool:1
+sndAmbient3D=bool:0
+sndObstruction=bool:1
+sndConeAngle=float:125.5
+sndVolType=enum:1
+sndRadius=float:800.25
+sndName=string:SOUNDÿ.WAV
+sndStartTime=float:6.25
+sndEndTime=float:20.5
+sndName2=string:NIGHTþ.WAV
+[]
+[special zCVobLight:zCVob 46080 18]
+pack=int:1
+dataRaw=raw:000080bf000000c0000040c0000080400000a0400000c0400000e840000008c100001c410000803f0000004000004040000080400000a0400000c0400000e0400000004100002041750c
+visual=string:DECALý.TGA
+[visual § 0 1]
+[]
+lightPresetInUse=string:LIGHTÿ
+lightType=enum:1
+range=float:1500.5
+color=color:17 34 51 203
+spotConeAngle=float:32.5
+lightStatic=bool:1
+lightQuality=enum:2
+lensflareFX=string:HALOþ
+[]
+[special zCVobLight:zCVob 46080 19]
+pack=int:1
+dataRaw=raw:000080bf000000c0000040c0000080400000a0400000c0400000e840000008c100001c410000803f0000004000004040000080400000a0400000c0400000e0400000004100002041750c
+visual=string:DECALý.TGA
+[visual § 0 1]
+[]
+lightPresetInUse=string:LIGHTÿ
+lightType=enum:1
+range=float:1500.5
+color=color:17 34 51 203
+spotConeAngle=float:32.5
+lightStatic=bool:0
+lightQuality=enum:2
+lensflareFX=string:HALOþ
+turnedOn=bool:1
+rangeAniScale=string: 	0.5  1.25 2.5 	
+rangeAniFPS=float:3.25
+rangeAniSmooth=bool:1
+colorAniList=string: 64 (17 34 51) 255 (1 2 3) 
+colorAniFPS=float:5.5
+colorAniSmooth=bool:0
+[]

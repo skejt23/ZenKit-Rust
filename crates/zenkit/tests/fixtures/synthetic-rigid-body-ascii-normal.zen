@@ -1,0 +1,24 @@
+ZenGin Archive
+ver 1
+zCArchiverGeneric
+ASCII
+saveGame 0
+date 15.10.2026 12:34:56
+user fixtureÿ
+END
+objects 0
+END
+
+before=int:-701
+vel=vec3:-1.25 2.5 3.75
+mode=int:255
+gravOn=bool:1
+gravScale=float:-0.125
+slideDir=vec3:4.5 -5.25 6.125
+between=int:812
+vel=vec3:7.25 -8.5 9.75
+mode=int:0
+gravOn=bool:0
+gravScale=float:2.25
+slideDir=vec3:-10.5 11.25 -12.125
+after=int:-913

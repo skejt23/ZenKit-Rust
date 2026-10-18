@@ -1,0 +1,58 @@
+ZenGin Archive
+ver 1
+zCArchiverGeneric
+ASCII
+saveGame 0
+date 15.10.2026 00:00:00
+user fixtureÿ
+END
+objects 10
+END
+
+[library zCCSLib 0 0]
+NumOfItems=int:5
+[% zCCSBlock 0 1]
+blockName=string:ALPHA
+numOfBlocks=int:1
+subBlock0=float:0.0
+[% zCCSBlock 0 2]
+blockName=string:INNERþ
+numOfBlocks=int:1
+subBlock0=float:0.0
+[% zCCSAtomicBlock 0 3]
+[% oCMsgConversation:oCNpcMessage:zCEventMessage 0 4]
+subType=enum:2
+text=string:Grüne Stimme: [ja] = "komplett"; ÿ
+name=string:VOICEý.WAV
+[]
+[]
+[]
+[]
+[% § 0 1]
+[]
+[% zCCSBlock 0 5]
+blockName=string:BETA
+numOfBlocks=int:1
+subBlock0=float:0.0
+[% zCCSAtomicBlock 0 6]
+[% § 0 4]
+[]
+[]
+[]
+[% zCCSBlock 0 7]
+blockName=string:GAMMA
+numOfBlocks=int:1
+subBlock0=float:0.0
+[% § 0 3]
+[]
+[]
+[% zCCSBlock 0 8]
+blockName=string:NULLMSG
+numOfBlocks=int:1
+subBlock0=float:0.0
+[% zCCSAtomicBlock 0 9]
+[% % 0 0]
+[]
+[]
+[]
+[]

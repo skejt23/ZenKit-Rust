@@ -1,0 +1,7 @@
+/build/
+/target/
+/dev-notes/
+/tools/
+/tests/corpus/private/
+__pycache__/
+*.pyc

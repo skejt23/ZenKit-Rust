@@ -1,0 +1,222 @@
+ZenGin Archive
+ver 1
+zCArchiverGeneric
+ASCII
+saveGame 1
+date 15.10.2026 12:34:56
+user fixtureÿ
+END
+objects 9
+END
+
+[npc oCNpc:zCVob 52224 0]
+pack=int:1
+dataRaw=raw:000080bf000000c0000040c0000080400000a0400000c0400000e840000008c100001c410000803f0000004000004040000080400000a0400000c0400000e0400000004100002041755c400000a03f0000403f
+visual=string:DECALý.TGA
+[visual zCDecal 0 1]
+name=string:DECALý.TGA
+decalDim=rawFloat:32.5 64.25
+decalOffset=rawFloat:-1.25 2.5
+decal2Sided=bool:1
+decalAlphaFunc=enum:3
+decalTexAniFPS=float:12.5
+decalAlphaWeight=int:173
+ignoreDayLight=bool:1
+[]
+[ai oCAIHuman:oCAniCtrl_Human:zCAIPlayer 0 2]
+waterLevel=int:2
+floorY=float:-10.5
+waterY=float:20.25
+ceilY=float:30.75
+feetY=float:-4.5
+headY=float:6.25
+fallDistY=float:7.5
+fallStartY=float:8.75
+[aiNpc § 0 0]
+[]
+walkMode=int:3
+weaponMode=int:4
+wmodeLast=int:5
+wmodeSelect=int:6
+changeWeapon=bool:1
+actionMode=int:7
+[]
+sleepMode=int:2
+nextOnTimer=float:12.5
+vel=vec3:1.5 -2.25 3.75
+mode=int:7
+gravOn=bool:1
+gravScale=float:0.625
+slideDir=vec3:-4.5 5.25 -6.75
+npcInstance=string:NPC_INSTANCEÿ
+modelScale=vec3:1.25 0.875 1.5
+modelFatness=float:-0.375
+numOverlays=int:2
+overlay=string:OVERLAY_Aþ
+overlay=string:OVERLAY_Bý
+flags=int:74565
+guild=int:7
+guildTrue=int:9
+level=int:23
+xp=int:123456
+xpnl=int:234567
+lp=int:-4
+numTalents=int:4
+[talent0 oCNpcTalent 0 3]
+talent=int:11
+value=int:-9
+skill=int:2
+[]
+[emptyTalent % 0 0]
+[]
+[talent1 oCNpcTalent 0 4]
+talent=int:12
+value=int:-6
+skill=int:3
+[]
+[talentAlias § 0 3]
+[]
+fightTactic=int:2
+fightMode=int:3
+wounded=bool:1
+mad=bool:0
+madTime=int:-17
+player=bool:1
+atr0=int:10
+atr1=int:13
+atr2=int:16
+atr3=int:19
+atr4=int:22
+atr5=int:25
+atr6=int:28
+atr7=int:31
+hc0=int:11
+hc1=int:22
+hc2=int:33
+hc3=int:44
+mission0=int:-10
+mission1=int:-9
+mission2=int:-8
+mission3=int:-7
+mission4=int:-6
+startAIState=string:ZS_STARTü
+scriptVars=raw:70feffff81feffff92feffffa3feffffb4feffffc5feffffd6feffffe7fefffff8feffff09ffffff1affffff2bffffff3cffffff4dffffff5effffff6fffffff80ffffff91ffffffa2ffffffb3ffffffc4ffffffd5ffffffe6fffffff7ffffff08000000190000002a0000003b0000004c0000005d0000006e0000007f00000090000000a1000000b2000000c3000000d4000000e5000000f60000000701000018010000290100003a0100004b0100005c0100006d0100007e0100008f010000a0010000b1010000c2010000d3010000e4010000f5010000060200001702000028020000390200004a0200005b0200006c0200007d0200008e0200009f020000b0020000c1020000d2020000e3020000f402000005030000160300002703000038030000490300005a0300006b0300007c0300008d0300009e030000af030000c0030000d1030000e2030000f30300000404000015040000260400003704000048040000590400006a0400007b0400008c0400009d040000ae040000bf040000d0040000e1040000f204000003050000
+scriptWp=string:WP_NPCû
+attitude=int:-2
+tmpAttitude=int:3
+nameNr=int:5
+spells=raw:128000ff
+NumOfEntries=int:2
+told=bool:1
+spread_time=float:1.625
+spreadType=int:3
+news_id=int:190
+gossip=bool:0
+guildvictim=bool:1
+witnessName=string:WITNESSú
+offenderName=string:OFFENDERù
+victimName=string:VICTIMø
+told=bool:0
+spread_time=float:-0.25
+spreadType=int:4
+news_id=int:200
+gossip=bool:1
+guildvictim=bool:0
+witnessName=string:OTHER
+offenderName=string:
+victimName=string:LAST
+[carryVob oCItem:zCVob 0 5]
+pack=int:1
+dataRaw=raw:000080bf000000c0000040c0000080400000a0400000c0400000e840000008c100001c410000803f0000004000004040000080400000a0400000c0400000e0400000004100002041755c400000a03f0000403f
+visual=string:DECALý.TGA
+[visual § 0 1]
+[]
+[ai oCAIVobMove 0 6]
+[vob § 0 0]
+[]
+[owner § 0 1]
+[]
+[]
+sleepMode=int:2
+nextOnTimer=float:12.5
+vel=vec3:1.5 -2.25 3.75
+mode=int:7
+gravOn=bool:1
+gravScale=float:0.625
+slideDir=vec3:-4.5 5.25 -6.75
+itemInstance=string:ITMI_NPC_Aþ
+amount=int:17
+flags=int:512
+[]
+[enemy § 0 0]
+[]
+moveLock=bool:1
+packed=string:PACK0ÿ;PACK1;PACK2;PACK3;PACK4;PACK5;PACK6;PACK7;PACK8
+itemCount=int:3
+[item0 § 0 5]
+[]
+shortKey0=int:7
+[item1 oCItem:zCVob 0 7]
+pack=int:1
+dataRaw=raw:000080bf000000c0000040c0000080400000a0400000c0400000e840000008c100001c410000803f0000004000004040000080400000a0400000c0400000e0400000004100002041754c400000a03f0000403f
+visual=string:DECALý.TGA
+[visual § 0 1]
+[]
+sleepMode=int:2
+nextOnTimer=float:12.5
+vel=vec3:1.5 -2.25 3.75
+mode=int:7
+gravOn=bool:1
+gravScale=float:0.625
+slideDir=vec3:-4.5 5.25 -6.75
+itemInstance=string:ITMI_NPC_Bý
+amount=int:3
+flags=int:1026
+[]
+[itemAlias § 0 5]
+[]
+shortKey2=int:-3
+numInvSlots=int:3
+used=bool:0
+name=string:EMPTY÷
+used=bool:1
+name=string:HANDö
+[slotItem § 0 7]
+[]
+inInv=bool:1
+used=bool:1
+name=string:NULLõ
+[slotNull % 0 0]
+[]
+inInv=bool:0
+curState.valid=bool:1
+curState.name=string:ZS_CURRENTô
+curState.prgIndex=int:-3
+curState.isRtnState=bool:0
+nextState.valid=bool:0
+nextState.name=string:ZS_NEXTó
+nextState.prgIndex=int:19
+nextState.isRtnState=bool:1
+lastAIState=int:-7
+hasRoutine=bool:1
+rtnChanged=bool:0
+rtnOverlay=bool:1
+rtnOverlayCount=int:4
+walkmode_routine=int:2
+weaponmode_routine=bool:1
+startNewRoutine=bool:0
+aiStateDriven=int:6
+aiStatePos=vec3:-17.25 28.5 -39.75
+curRoutine=string:ROUTINEò
+respawn=bool:1
+respawnTime=int:7654
+protection=raw:e2ffffffedfffffff8ffffff030000000e00000019000000240000002f000000
+bsInterruptableOverride=int:-2
+npcType=int:5
+spellMana=int:31
+[]
+[standaloneTalent oCNpcTalent 0 8]
+talent=int:13
+value=int:-3
+skill=int:4
+[]

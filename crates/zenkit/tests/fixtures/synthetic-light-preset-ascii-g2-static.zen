@@ -1,0 +1,19 @@
+ZenGin Archive
+ver 1
+zCArchiverGeneric
+ASCII
+saveGame 0
+date 15.10.2026 12:34:56
+user fixtureÿ
+END
+objects 0
+END
+
+lightPresetInUse=string:LIGHTÿ
+lightType=enum:1
+range=float:1500.5
+color=color:17 34 51 203
+spotConeAngle=float:32.5
+lightStatic=bool:1
+lightQuality=enum:2
+lensflareFX=string:HALOþ

@@ -13,10 +13,13 @@
 //! cross an explicit closing parenthesis. Required flags retain unknown bytes.
 //!
 //! Binary strings use exact LF or CRLF delimiters with no leading-space trimming.
+//! Model-tag chunks permit trailing ASCII whitespace after the bone line.
 //! Unknown chunks/instructions fail explicitly. MSB MAX_FPS (F510), animation
 //! sync/batch chunks (F550/F560) and PFX-ground/set-mesh/swap-mesh event chunks
-//! (F5A6/F5A7/F5A8) return Unsupported. Event groups own ordered events on the most
-//! recent animation, blend or combination; other declarations/scopes clear ownership.
+//! (F5A6/F5A7/F5A8) return Unsupported. MSB events attach to the most recent
+//! ordinary animation, including across blends, combinations and scope markers.
+//! Events before the first animation fail explicitly; group counts remain checked.
+//! MDS event blocks attach to the animation, blend or combination that contains them.
 //!
 //! ```
 //! use zenkit::{animation::Limits, model_script::{ModelScript, SyntaxMode}};

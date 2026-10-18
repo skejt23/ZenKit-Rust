@@ -9,6 +9,9 @@ const MAN: &[u8] = include_bytes!("../tests/fixtures/synthetic-animation-man-g1.
 const MMB: &[u8] = include_bytes!("../tests/fixtures/synthetic-animation-mmb-g1.mmb");
 const MDS: &[u8] = include_bytes!("../tests/fixtures/synthetic-animation-mds-g1.mds");
 const MSB: &[u8] = include_bytes!("../tests/fixtures/synthetic-animation-msb-g1.msb");
+const MSB_MODEL_TAG_PADDING: &[u8] =
+    include_bytes!("fixtures/synthetic-animation-msb-model-tag-padding.msb");
+const MSB_EVENT_OWNERS: &[u8] = include_bytes!("fixtures/synthetic-animation-msb-event-owners.msb");
 fn chunk(id: u16, data: &[u8]) -> Vec<u8> {
     [
         id.to_le_bytes().as_slice(),
@@ -243,6 +246,114 @@ fn compiled_ignored_fields_are_retained() {
     );
 }
 #[test]
+fn compiled_model_tag_padding_preserves_fields_and_next_animation() {
+    // Independently authored wire fixture: the ASCII DEF_ prefix occupies the
+    // integer field, followed by a tag name, a bone, and three empty lines.
+    let records = parts(MSB_MODEL_TAG_PADDING);
+    assert_eq!(records[0].0, 0xf590);
+    assert_eq!(records[0].2, b"DEF_HIT_LIMB\nSYNTHETIC_HAND\n\n\n\n");
+    assert_eq!(records[1].0, 0xf520);
+    assert_eq!(records[1].1, 6 + records[0].2.len());
+
+    let script = ModelScript::from_msb(MSB_MODEL_TAG_PADDING, Limits::default()).unwrap();
+    assert_eq!(script.model_tags.len(), 1);
+    let tag = &script.model_tags[0];
+    assert_eq!(tag.frame, Some(i32::from_le_bytes(*b"DEF_")));
+    assert_eq!(tag.name, b"HIT_LIMB");
+    assert_eq!(tag.bone, b"SYNTHETIC_HAND");
+    assert_eq!(script.animations.len(), 1);
+    let animation = &script.animations[0];
+    assert_eq!(animation.common.name, b"AFTER_TAG");
+    assert_eq!(animation.common.layer, 2);
+    assert_eq!(animation.common.next, b"AFTER_TAG");
+    assert_eq!(animation.common.blend_in, 0.125);
+    assert_eq!(animation.common.blend_out, 0.25);
+    assert_eq!(animation.common.flags.0, b"M");
+    assert_eq!(animation.model, b"SYNTHETIC.ASC");
+    assert_eq!(animation.direction.playback(), Some(Playback::Forward));
+    assert_eq!(animation.first_frame, 3);
+    assert_eq!(animation.last_frame, 17);
+    assert_eq!(animation.fps, 25.);
+    assert_eq!(animation.speed, 0.5);
+    assert_eq!(animation.collision_volume_scale, 1.);
+}
+#[test]
+fn compiled_model_tag_padding_is_bounded_and_only_whitespace() {
+    for padding in [b"".as_slice(), b"\n\n\n", b" \t\r\n\x0b\x0c"] {
+        for ending in [b"\n".as_slice(), b"\r\n"] {
+            let payload = [b"DEF_HIT_LIMB\nSYNTHETIC_HAND", ending, padding].concat();
+            let bytes = edited(MSB_MODEL_TAG_PADDING, 0xf590, |v| *v = payload);
+            let script = ModelScript::from_msb(&bytes, Limits::default()).unwrap();
+            assert_eq!(script.model_tags[0].bone, b"SYNTHETIC_HAND");
+            assert_eq!(script.animations[0].common.name, b"AFTER_TAG");
+        }
+    }
+    for (trailing, unexpected) in [
+        (b"FUTURE\n".as_slice(), 0),
+        (b"\n\tX\n", 2),
+        (b"\n\0", 1),
+        (b"\x80", 0),
+    ] {
+        let fields = b"DEF_HIT_LIMB\nSYNTHETIC_HAND\n";
+        let bytes = edited(MSB_MODEL_TAG_PADDING, 0xf590, |v| {
+            *v = [fields.as_slice(), trailing].concat()
+        });
+        let error = ModelScript::from_msb(&bytes, Limits::default()).unwrap_err();
+        assert_eq!(error.kind, ErrorKind::Unsupported);
+        assert_eq!(error.offset, Some(6 + fields.len() + unexpected));
+    }
+    // Padding tolerance belongs to MODEL_TAG, not the shared finish check.
+    let animation = parts(MSB_MODEL_TAG_PADDING)[1].clone();
+    let bytes = edited(MSB_MODEL_TAG_PADDING, 0xf520, |v| v.push(b'\n'));
+    let error = ModelScript::from_msb(&bytes, Limits::default()).unwrap_err();
+    assert_eq!(error.kind, ErrorKind::Unsupported);
+    assert_eq!(error.offset, Some(animation.1 + 6 + animation.2.len()));
+}
+#[test]
+fn compiled_model_tag_truncation_cannot_read_next_chunk() {
+    // Keep each shortened payload's declared length consistent and put a valid
+    // animation directly after it. Required fields cannot borrow its bytes.
+    let fields = b"DEF_HIT_LIMB\nSYNTHETIC_HAND\n";
+    for length in 0..fields.len() {
+        let bytes = edited(MSB_MODEL_TAG_PADDING, 0xf590, |v| {
+            *v = fields[..length].to_vec()
+        });
+        let mut prefixed = vec![0; 13];
+        prefixed.extend(&bytes);
+        let mut reader = Reader::new(&prefixed);
+        reader.take_bytes(13, "test").unwrap();
+        let error = ModelScript::read_msb(&mut reader, bytes.len(), Limits::default()).unwrap_err();
+        assert_eq!(error.kind, ErrorKind::UnexpectedEof);
+        assert_eq!(reader.position(), 13);
+        assert!(
+            error
+                .offset
+                .is_some_and(|p| (19..=19 + length).contains(&p))
+        );
+    }
+    for malformed in [
+        b"DEF_HIT\0LIMB\nHAND\n".as_slice(),
+        b"DEF_HIT_LIMB\nHA\rND\n",
+    ] {
+        let bytes = edited(MSB_MODEL_TAG_PADDING, 0xf590, |v| *v = malformed.to_vec());
+        assert_eq!(
+            ModelScript::from_msb(&bytes, Limits::default())
+                .unwrap_err()
+                .kind,
+            ErrorKind::InvalidData
+        );
+    }
+    let first_chunk_length = 6 + parts(MSB_MODEL_TAG_PADDING)[0].2.len();
+    for length in 0..first_chunk_length {
+        let error =
+            ModelScript::from_msb(&MSB_MODEL_TAG_PADDING[..length], Limits::default()).unwrap_err();
+        assert!(matches!(
+            error.kind,
+            ErrorKind::UnexpectedEof | ErrorKind::InvalidData
+        ));
+    }
+}
+#[test]
 fn frame_lists_are_checked_borrowed_and_bidirectional() {
     let f = FrameList::new(b"\t1 -2 3\x0b ").unwrap();
     assert_eq!(f.len(), 3);
@@ -380,14 +491,89 @@ fn compiled_group_counts_orphans_and_unknowns() {
     }
 }
 #[test]
-fn compiled_groups_bind_latest_blend_and_reject_closed_owner() {
-    let mut bytes = chunk(0xf540, b"A\nB\n\0\0\0\0\0\0\0\0");
-    bytes.extend(chunk(0xf5a0, &1u32.to_le_bytes()));
-    bytes.extend(chunk(0xf5a5, &[0; 8]));
-    bytes.extend(chunk(0xf5af, &[]));
-    bytes.extend(chunk(0xffff, &[]));
-    let s = ModelScript::from_msb(&bytes, Limits::default()).unwrap();
-    assert_eq!(s.blends[0].events.len(), 1);
+fn compiled_events_bind_last_animation_across_blends_and_combinations() {
+    let s = ModelScript::from_msb(MSB_EVENT_OWNERS, Limits::default()).unwrap();
+    assert_eq!(s.animations.len(), 2);
+    assert_eq!(s.blends.len(), 2);
+    assert_eq!(s.combinations.len(), 1);
+    assert!(s.blends.iter().all(|v| v.events.is_empty()));
+    assert!(s.combinations.iter().all(|v| v.events.is_empty()));
+
+    let first = &s.animations[0];
+    assert_eq!(first.common.name, b"FIRST");
+    let [
+        Event::GroundSound(step),
+        Event::Particle(spark),
+        Event::Sound(pick),
+    ] = first.events.as_slice()
+    else {
+        panic!("events following both declarations must stay on FIRST")
+    };
+    assert_eq!(step.frame, 22);
+    assert_eq!(step.name, b"SYNTH_STEP");
+    assert_eq!(step.range, 100.);
+    assert_eq!(step.empty_slot, Bool32(1));
+    assert_eq!(spark.frame, 24);
+    assert_eq!(spark.index, 7);
+    assert_eq!(spark.name, b"SYNTH_SPARK");
+    assert_eq!(spark.position, b"SYNTH_HAND");
+    assert_eq!(spark.attached, Bool32(1));
+    assert_eq!(pick.frame, 25);
+    assert_eq!(pick.name, b"SYNTH_PICK");
+    assert_eq!(pick.range, 200.);
+    assert_eq!(pick.empty_slot, Bool32(0));
+
+    let second = &s.animations[1];
+    assert_eq!(second.common.name, b"SECOND");
+    let [
+        Event::Tag(tag),
+        Event::ParticleStop(stop),
+        Event::Morph(morph),
+        Event::CameraTremor(tremor),
+    ] = second.events.as_slice()
+    else {
+        panic!("a new ordinary animation must take ownership of subsequent events")
+    };
+    assert_eq!(tag.frame, 26);
+    assert_eq!(tag.name, b"DEF_FIGHTMODE");
+    assert_eq!(tag.arguments, [b"1H"]);
+    assert_eq!(stop.frame, 27);
+    assert_eq!(stop.index, 7);
+    assert_eq!(morph.frame, 28);
+    assert_eq!(morph.animation, b"SYNTH_MORPH");
+    assert_eq!(morph.node, b"SYNTH_HEAD");
+    assert_eq!(morph.compiled_values, Some([0.25, 0.75]));
+    assert_eq!(tremor.frame, 29);
+    assert_eq!(tremor.fields, [1, 2, 3, 4]);
+}
+#[test]
+fn compiled_other_declarations_and_scope_markers_preserve_last_animation() {
+    let animation = parts(MSB_EVENT_OWNERS)
+        .into_iter()
+        .find(|v| v.0 == 0xf520)
+        .unwrap()
+        .2;
+    for (id, _, payload) in parts(MSB).into_iter().filter(|v| {
+        matches!(
+            v.0,
+            0xf000 | 0xf100 | 0xf300 | 0xf400 | 0xf530 | 0xf580 | 0xf590
+        )
+    }) {
+        let bytes = [
+            chunk(0xf520, &animation),
+            chunk(id, &payload),
+            chunk(0xf5a0, &1u32.to_le_bytes()),
+            chunk(0xf5a5, &[0; 8]),
+            chunk(0xf5af, &[]),
+            chunk(0xffff, &[]),
+        ]
+        .concat();
+        let s = ModelScript::from_msb(&bytes, Limits::default()).unwrap();
+        assert!(matches!(
+            s.animations[0].events.as_slice(),
+            [Event::ParticleStop(_)]
+        ));
+    }
     let mut chunks = parts(MSB);
     let p = chunks.iter().position(|c| c.0 == 0xf5ff).unwrap();
     chunks.insert(p + 1, (0xf5a5, 0, vec![0; 8]));
@@ -395,7 +581,31 @@ fn compiled_groups_bind_latest_blend_and_reject_closed_owner() {
         .into_iter()
         .flat_map(|(id, _, v)| chunk(id, &v))
         .collect();
-    assert!(ModelScript::from_msb(&bytes, Limits::default()).is_err());
+    let s = ModelScript::from_msb(&bytes, Limits::default()).unwrap();
+    assert_eq!(s.animations[0].events.len(), 30);
+    assert!(matches!(
+        s.animations[0].events.last(),
+        Some(Event::ParticleStop(_))
+    ));
+}
+#[test]
+fn compiled_blend_and_combination_events_require_an_ordinary_animation() {
+    for (id, _, payload) in parts(MSB_EVENT_OWNERS)
+        .into_iter()
+        .filter(|v| matches!(v.0, 0xf540 | 0xf570))
+    {
+        let bytes = [
+            chunk(id, &payload),
+            chunk(0xf5a0, &1u32.to_le_bytes()),
+            chunk(0xf5a5, &[0; 8]),
+            chunk(0xf5af, &[]),
+            chunk(0xffff, &[]),
+        ]
+        .concat();
+        let error = ModelScript::from_msb(&bytes, Limits::default()).unwrap_err();
+        assert_eq!(error.kind, ErrorKind::InvalidData);
+        assert_eq!(error.offset, Some(6 + payload.len()));
+    }
 }
 #[test]
 fn limits_bound_every_format() {

@@ -71,24 +71,10 @@ fn event(id: u16, r: &mut Reader<'_>, b: &mut Budget) -> Result<Event> {
         _ => return Err(at(ErrorKind::Unsupported, r.position() - 4)),
     })
 }
-#[derive(Clone, Copy)]
-enum Owner {
-    Animation(usize),
-    Blend(usize),
-    Combination(usize),
-}
-impl Owner {
-    fn events(self, s: &mut ModelScript) -> &mut Vec<Event> {
-        match self {
-            Self::Animation(i) => &mut s.animations[i].events,
-            Self::Blend(i) => &mut s.blends[i].events,
-            Self::Combination(i) => &mut s.combinations[i].events,
-        }
-    }
-}
 pub(super) fn read(r: &mut Reader<'_>, b: &mut Budget) -> Result<ModelScript> {
     let mut s = ModelScript::default();
-    let mut group: Option<(Owner, usize, usize)> = None;
+    let mut group: Option<(usize, usize, usize)> = None;
+    // Compiled events stay on the last ordinary animation across declarations.
     let mut owner = None;
     let mut ended = false;
     let mut model_open = false;
@@ -104,7 +90,6 @@ pub(super) fn read(r: &mut Reader<'_>, b: &mut Budget) -> Result<ModelScript> {
         }
         match id {
             0xf000 => {
-                owner = None;
                 if s.root.is_some() {
                     return Err(at(ErrorKind::InvalidData, p));
                 }
@@ -114,7 +99,6 @@ pub(super) fn read(r: &mut Reader<'_>, b: &mut Budget) -> Result<ModelScript> {
                 });
             }
             0xf100 => {
-                owner = None;
                 if s.source.is_some() {
                     return Err(at(ErrorKind::InvalidData, p));
                 }
@@ -124,7 +108,6 @@ pub(super) fn read(r: &mut Reader<'_>, b: &mut Budget) -> Result<ModelScript> {
                 });
             }
             0xf300 => {
-                owner = None;
                 if s.skeleton.is_some() {
                     return Err(at(ErrorKind::InvalidData, p));
                 }
@@ -134,7 +117,6 @@ pub(super) fn read(r: &mut Reader<'_>, b: &mut Budget) -> Result<ModelScript> {
                 });
             }
             0xf400 => {
-                owner = None;
                 let v = line(&mut c, b)?;
                 push(&mut s.meshes, v, b, p)?;
             }
@@ -151,7 +133,7 @@ pub(super) fn read(r: &mut Reader<'_>, b: &mut Budget) -> Result<ModelScript> {
                     events: vec![],
                 };
                 push(&mut s.animations, v, b, p)?;
-                owner = Some(Owner::Animation(s.animations.len() - 1));
+                owner = Some(s.animations.len() - 1);
             }
             0xf530 => {
                 let v = Alias {
@@ -160,7 +142,6 @@ pub(super) fn read(r: &mut Reader<'_>, b: &mut Budget) -> Result<ModelScript> {
                     direction: Direction(line(&mut c, b)?),
                 };
                 push(&mut s.aliases, v, b, p)?;
-                owner = None;
             }
             0xf540 => {
                 let v = Blend {
@@ -173,7 +154,6 @@ pub(super) fn read(r: &mut Reader<'_>, b: &mut Budget) -> Result<ModelScript> {
                     events: vec![],
                 };
                 push(&mut s.blends, v, b, p)?;
-                owner = Some(Owner::Blend(s.blends.len() - 1));
             }
             0xf570 => {
                 let v = Combination {
@@ -183,12 +163,10 @@ pub(super) fn read(r: &mut Reader<'_>, b: &mut Budget) -> Result<ModelScript> {
                     events: vec![],
                 };
                 push(&mut s.combinations, v, b, p)?;
-                owner = Some(Owner::Combination(s.combinations.len() - 1));
             }
             0xf580 => {
                 let v = line(&mut c, b)?;
                 push(&mut s.disabled_animations, v, b, p)?;
-                owner = None;
             }
             0xf590 => {
                 let v = ModelTag {
@@ -196,13 +174,22 @@ pub(super) fn read(r: &mut Reader<'_>, b: &mut Budget) -> Result<ModelScript> {
                     name: line(&mut c, b)?,
                     bone: line(&mut c, b)?,
                 };
+                // Compiled model tags can pad the bone line with whitespace.
+                // This substream ends at the declared chunk boundary.
+                let trailing_start = c.position();
+                if let Some(i) = c
+                    .take_bytes(c.remaining(), CTX)?
+                    .iter()
+                    .position(|&byte| !space(byte))
+                {
+                    return Err(at(ErrorKind::Unsupported, trailing_start + i));
+                }
                 push(&mut s.model_tags, v, b, p)?;
-                owner = None;
             }
             0xf5a0 => {
                 let index = owner.ok_or_else(|| at(ErrorKind::InvalidData, p))?;
                 let count = c.u32(CTX)? as usize;
-                let start = index.events(&mut s).len();
+                let start = s.animations[index].events.len();
                 group = Some((index, start, count));
                 push(
                     &mut s.markers,
@@ -218,9 +205,9 @@ pub(super) fn read(r: &mut Reader<'_>, b: &mut Budget) -> Result<ModelScript> {
             0xf5a1..=0xf5a5 | 0xf5a9 | 0xf5aa => {
                 let index = owner.ok_or_else(|| at(ErrorKind::InvalidData, p))?;
                 let v = event(id, &mut c, b)?;
-                push(index.events(&mut s), v, b, p)?;
+                push(&mut s.animations[index].events, v, b, p)?;
                 if let Some((i, start, count)) = group
-                    && i.events(&mut s).len() - start > count
+                    && s.animations[i].events.len() - start > count
                 {
                     return Err(at(ErrorKind::InvalidData, p));
                 }
@@ -228,7 +215,7 @@ pub(super) fn read(r: &mut Reader<'_>, b: &mut Budget) -> Result<ModelScript> {
             0xf5af => {
                 let (i, start, count) =
                     group.take().ok_or_else(|| at(ErrorKind::InvalidData, p))?;
-                if i.events(&mut s).len() - start != count {
+                if s.animations[i].events.len() - start != count {
                     return Err(at(ErrorKind::InvalidData, p));
                 }
                 push(
@@ -243,7 +230,6 @@ pub(super) fn read(r: &mut Reader<'_>, b: &mut Budget) -> Result<ModelScript> {
                 )?;
             }
             0xf200 => {
-                owner = None;
                 if model_open {
                     return Err(at(ErrorKind::InvalidData, p));
                 }
@@ -260,7 +246,6 @@ pub(super) fn read(r: &mut Reader<'_>, b: &mut Budget) -> Result<ModelScript> {
                 )?;
             }
             0xf500 => {
-                owner = None;
                 if enum_open {
                     return Err(at(ErrorKind::InvalidData, p));
                 }
@@ -277,7 +262,6 @@ pub(super) fn read(r: &mut Reader<'_>, b: &mut Budget) -> Result<ModelScript> {
                 )?;
             }
             0xf5ff => {
-                owner = None;
                 if !enum_open {
                     return Err(at(ErrorKind::InvalidData, p));
                 }
@@ -294,7 +278,6 @@ pub(super) fn read(r: &mut Reader<'_>, b: &mut Budget) -> Result<ModelScript> {
                 )?;
             }
             0xf2ff => {
-                owner = None;
                 if !model_open || enum_open {
                     return Err(at(ErrorKind::InvalidData, p));
                 }

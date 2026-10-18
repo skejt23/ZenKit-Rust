@@ -10,6 +10,19 @@ is included by default.
 
 The crate carries its own [license](crates/zenkit/LICENSE).
 
+## World viewer demo
+
+The [world viewer](examples/world-viewer/README.md) renders Gothic I and II world
+geometry and static objects with a keyboard and mouse free camera. It requires
+your own game installation and uses a separate Cargo workspace and dependency
+lockfile. Run it from the repository root:
+
+```powershell
+cargo run --manifest-path examples/world-viewer/Cargo.toml --release --locked -- NEWWORLD.ZEN --game g2 --game-dir '<GOTHIC_II_DIR>'
+```
+
+See the demo guide for controls and screenshots. Tested on Windows x64.
+
 ## Building
 
 Requires Rust 1.99.0, selected automatically by `rust-toolchain.toml`.

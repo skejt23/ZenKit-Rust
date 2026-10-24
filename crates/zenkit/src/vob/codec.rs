@@ -128,17 +128,14 @@ pub(crate) fn read_prefix(
                 v.base.shadow = Shadow::from_raw(u32::from(a >> 6));
                 v.base.physics_enabled = b & 64 != 0;
                 if let VobVersion::Gothic2(g) = &mut v.base.version {
-                    g.animation = AnimationMode::from_raw(u32::from((b >> 7) & 3));
-                    g.bias = i32::from((b >> 9) & 31);
-                    g.ambient = b & 0x4000 != 0;
+                    g.animation = AnimationMode::from_raw(u32::from((b >> 8) & 3));
+                    g.bias = i32::from((b >> 10) & 31);
+                    g.ambient = b & 0x8000 != 0;
                     g.strength = input.f32("packed VOB animation strength")?;
                     g.far_clip = input.f32("packed VOB far clip")?;
                 }
-                let mask = if game == GameVersion::Gothic1 {
-                    0x80
-                } else {
-                    0x8000
-                } | if save { 0 } else { 0x20 };
+                // Preserve bit 7 in both games, plus bit 5 outside save games.
+                let mask = 0x80 | if save { 0 } else { 0x20 };
                 v.base.packing = Packing::Packed {
                     marker,
                     reserved: b & mask,

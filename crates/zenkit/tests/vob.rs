@@ -264,7 +264,7 @@ fn packed_presence_reserved_tail_and_noncanonical_discriminator_survive() {
         else {
             panic!()
         };
-        assert_eq!((*marker, *reserved), (7, 32768));
+        assert_eq!((*marker, *reserved), (7, 128));
         assert_eq!(
             tail.as_slice(),
             if format == "binary" {

@@ -24,7 +24,7 @@
 //! BINARY resolves that dependency using the known Item schema's bounded fixed
 //! flags suffix, then validates the full parse.
 //!
-//! Packed G2 animation and bias use bits 7-8 and 9-13 respectively.
+//! Packed G2 animation, bias and ambient use bits 8-9, 10-14 and 15 respectively.
 //! Unknown unpacked enum integers and packed reserved bits survive;
 //! unrepresentable conversions fail explicitly.
 //!
@@ -177,7 +177,7 @@ impl VobKind {
 }
 
 /// Serialized layout. `marker` is the original nonzero `pack` discriminator.
-/// `reserved` holds only G1 bit 7 / G2 bit 15, plus bit 5 in normal archives
+/// `reserved` holds only bit 7 in both games, plus bit 5 in normal archives
 /// (where it does not announce an event-manager record). Known bits are derived
 /// from the other fields. Tagged `dataRaw` tails are retained verbatim; BINARY
 /// cannot delimit them and serialization to BINARY rejects a nonempty tail.
@@ -1225,10 +1225,7 @@ impl<'a> VobRef<'a> {
             Packing::Packed {
                 marker, reserved, ..
             } => {
-                let mask = match self.base.version {
-                    VobVersion::Gothic1 => 0x80,
-                    VobVersion::Gothic2(_) => 0x8000,
-                } | if save { 0 } else { 0x20 };
+                let mask = 0x80 | if save { 0 } else { 0x20 };
                 if *marker == 0 || reserved & !mask != 0 {
                     return Err(bad("packed VOB marker/reserved bits"));
                 }
@@ -1276,9 +1273,9 @@ impl<'a> VobRef<'a> {
             | (u16::from(self.base.event_manager.is_some()) << 5)
             | (u16::from(self.base.physics_enabled) << 6);
         if let VobVersion::Gothic2(g) = self.base.version {
-            b |= (g.animation.raw() as u16) << 7;
-            b |= (g.bias as u16) << 9;
-            b |= u16::from(g.ambient) << 14;
+            b |= (g.animation.raw() as u16) << 8;
+            b |= (g.bias as u16) << 10;
+            b |= u16::from(g.ambient) << 15;
         }
         Ok(Some((a as u8, b)))
     }

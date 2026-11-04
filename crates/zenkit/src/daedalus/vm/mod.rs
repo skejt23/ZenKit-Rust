@@ -1,8 +1,9 @@
 //! Bounded Daedalus execution with an externally owned, reentrant host.
 //!
 //! The VM borrows immutable DAT data and owns runtime state. InstanceId, ClassId
-//! and MemberKey belong to that runtime. Callbacks receive owned arguments and a
-//! context borrowing only the VM; nested calls reborrow the host.
+//! and MemberKey belong to that runtime. Callbacks borrow their arguments from a
+//! VM-owned buffer and receive a context borrowing only the VM; nested calls
+//! reborrow the host.
 //!
 //! [`Vm::from_script`] validates instruction boundaries, symbol roles and branch
 //! targets before constructing mutable cells. Indexed array bounds are checked
@@ -66,7 +67,10 @@ pub use state::RuntimeState;
 use std::{
     convert::Infallible,
     fmt,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 pub type Result<T> = std::result::Result<T, Fault>;
@@ -496,6 +500,7 @@ impl Value {
     pub fn bytes(bytes: &[u8], limit: usize) -> Result<Self> {
         Ok(Self::Bytes(copy_bytes(bytes, limit)?))
     }
+    #[inline]
     pub fn as_int(&self) -> Result<i32> {
         match self {
             Self::Int(n) | Self::Function(n) => Ok(*n),
@@ -506,6 +511,7 @@ impl Value {
             )),
         }
     }
+    #[inline]
     pub fn as_float(&self) -> Result<f32> {
         match self {
             Self::Float(n) => Ok(*n),
@@ -527,6 +533,7 @@ impl Value {
             )),
         }
     }
+    #[inline]
     pub fn as_instance(&self) -> Result<Option<InstanceId>> {
         match self {
             Self::Instance(v) => Ok(*v),
@@ -537,6 +544,7 @@ impl Value {
             )),
         }
     }
+    #[inline]
     fn bytes_len(&self) -> usize {
         if let Self::Bytes(v) = self {
             v.len()
@@ -544,6 +552,7 @@ impl Value {
             0
         }
     }
+    #[inline]
     fn try_copy(&self, limit: usize) -> Result<Self> {
         Ok(match self {
             Self::Int(v) => Self::Int(*v),
@@ -570,6 +579,7 @@ fn default_value(t: DataType) -> Result<Value> {
         }
     })
 }
+#[inline]
 fn value_matches(v: &Value, t: DataType) -> bool {
     matches!(
         (v, t),
@@ -584,9 +594,11 @@ fn value_matches(v: &Value, t: DataType) -> bool {
 fn fault(kind: FaultKind) -> Fault {
     Fault::new(kind)
 }
+#[inline]
 fn reserve<T>(v: &mut Vec<T>, n: usize) -> Result<()> {
     v.try_reserve(n).map_err(|_| fault(FaultKind::Allocation))
 }
+#[inline]
 fn checked(n: usize, add: usize, limit: usize, kind: LimitKind) -> Result<usize> {
     n.checked_add(add)
         .filter(|n| *n <= limit)
@@ -672,12 +684,18 @@ pub enum CallKind {
     DefaultExternal,
     RawDefault,
 }
+/// One callback invocation. Arguments are resolved, type-checked and charged
+/// against [`Limits::string_bytes`] in declaration order. They live in a
+/// buffer the VM reuses across calls, so the callback borrows them; it may
+/// move strings out (for example with [`std::mem::take`]) or copy what it
+/// retains. The buffer is detached from the VM while the callback runs, so
+/// the borrow may cross reentrant calls. Raw calls receive an empty slice.
 #[derive(Debug)]
-pub struct HostCall {
+pub struct HostCall<'a> {
     pub binding: u32,
     pub symbol: SymbolId,
     pub kind: CallKind,
-    pub arguments: Vec<Argument>,
+    pub arguments: &'a mut [Argument],
 }
 #[derive(Debug)]
 pub enum HostReturn {
@@ -708,7 +726,7 @@ pub trait Host: Sized {
     fn call(
         &mut self,
         _cx: &mut HostContext<'_, '_>,
-        _call: HostCall,
+        _call: HostCall<'_>,
     ) -> VmResult<HostReturn, Self::Error> {
         Err(fault(FaultKind::MissingExternal).into())
     }

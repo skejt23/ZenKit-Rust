@@ -30,7 +30,8 @@ pub mod vm;
 
 pub use inspect::Instances;
 pub use instruction::{
-    DecodeLimits, DecodedCode, Executable, Instruction, Instructions, Opcode, Operand,
+    DecodeLimits, DecodedCode, EXECUTABLE_BYTES_PER_INSTRUCTION, Executable, Instruction,
+    Instructions, Opcode, Operand,
 };
 
 use crate::{Error, ErrorKind, Result};
@@ -99,6 +100,7 @@ pub enum DataType {
     Instance = 7,
 }
 impl DataType {
+    #[inline]
     pub fn from_raw(raw: u32) -> Option<Self> {
         Some(match raw {
             0 => Self::Void,
@@ -178,15 +180,19 @@ struct Symbol {
     parent_offset: usize,
 }
 impl Symbol {
+    #[inline]
     fn data_type(&self) -> DataType {
         DataType::from_raw((self.properties >> 12) & 15).unwrap()
     }
+    #[inline]
     fn count(&self) -> usize {
         (self.properties & 0xfff) as usize
     }
+    #[inline]
     fn member(&self) -> bool {
         self.properties & (4 << 16) != 0
     }
+    #[inline]
     fn constant(&self) -> bool {
         self.properties & (1 << 16) != 0
     }
@@ -245,12 +251,14 @@ impl Script {
     pub fn is_empty(&self) -> bool {
         self.symbols.is_empty()
     }
+    #[inline]
     pub fn symbol(&self, index: u32) -> Option<SymbolRef<'_>> {
         ((index as usize) < self.len()).then_some(SymbolRef {
             script: self,
             index,
         })
     }
+    #[inline]
     pub fn get(&self, id: SymbolId) -> Result<SymbolRef<'_>> {
         if id.owner != self.owner {
             return Err(bad(ErrorKind::InvalidHandle));
@@ -297,9 +305,11 @@ impl fmt::Debug for SymbolRef<'_> {
     }
 }
 impl<'a> SymbolRef<'a> {
+    #[inline]
     fn inner(self) -> &'a Symbol {
         &self.script.symbols[self.index as usize]
     }
+    #[inline]
     pub fn id(self) -> SymbolId {
         SymbolId {
             owner: self.script.owner,
@@ -336,28 +346,36 @@ impl<'a> SymbolRef<'a> {
     pub fn vary(self) -> u32 {
         self.inner().vary
     }
+    #[inline]
     pub fn properties(self) -> u32 {
         self.inner().properties
     }
+    #[inline]
     pub fn data_type(self) -> DataType {
         self.inner().data_type()
     }
+    #[inline]
     pub fn count(self) -> u16 {
         self.inner().count() as u16
     }
     /// All six serialized flag bits; runtime-only access-trap/local bits are absent.
+    #[inline]
     pub fn flags(self) -> u8 {
         ((self.properties() >> 16) & 0x3f) as u8
     }
+    #[inline]
     pub fn is_const(self) -> bool {
         self.inner().constant()
     }
+    #[inline]
     pub fn has_return(self) -> bool {
         self.flags() & 2 != 0
     }
+    #[inline]
     pub fn is_member(self) -> bool {
         self.inner().member()
     }
+    #[inline]
     pub fn is_external(self) -> bool {
         self.flags() & 8 != 0
     }

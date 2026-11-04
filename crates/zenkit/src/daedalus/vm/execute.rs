@@ -1,12 +1,51 @@
 // Copyright (c) 2026 skejt23 (ZenKit Rust port)
 // Copyright (c) 2021-2024 GothicKit Contributors.
 // SPDX-License-Identifier: MIT
-use super::machine::{Binding, DefaultBinding, Frame};
+use super::machine::{DefaultBinding, Frame, StackValue};
 use super::*;
 enum Flow {
     Next,
     Jump,
     Return,
+}
+
+/// Parameter lists up to this length are copied without allocating.
+const INLINE_PARAMETERS: usize = 16;
+/// A copied parameter list; short lists stay inline.
+struct Parameters {
+    inline: [Parameter; INLINE_PARAMETERS],
+    len: usize,
+    heap: Vec<Parameter>,
+}
+impl Parameters {
+    fn collect(len: usize, items: impl Iterator<Item = Parameter>) -> Result<Self> {
+        let mut out = Self {
+            inline: [Parameter::InstanceReference; INLINE_PARAMETERS],
+            len,
+            heap: Vec::new(),
+        };
+        if let Some(slots) = out.inline.get_mut(..len) {
+            for (slot, p) in slots.iter_mut().zip(items) {
+                *slot = p;
+            }
+        } else {
+            reserve(&mut out.heap, len)?;
+            out.heap.extend(items.take(len));
+        }
+        Ok(out)
+    }
+    fn as_slice(&self) -> &[Parameter] {
+        self.inline.get(..self.len).unwrap_or(&self.heap)
+    }
+}
+/// A binding copied for one callback, so a reentrant registration cannot
+/// change the call in progress. The parameter list is shared, not copied.
+struct CallBinding {
+    symbol: SymbolId,
+    key: u32,
+    parameters: Arc<[Parameter]>,
+    result: DataType,
+    raw: bool,
 }
 
 fn returned(result: &HostReturn) -> GivenType {
@@ -69,6 +108,7 @@ impl<'s> Vm<'s> {
         let base = self.stack.len();
         let depth = self.frames.len();
         let pc = self.pc;
+        let ip = self.ip;
         let context = self.context;
         let outer = self.invocations == 0 && self.host_depth == 0;
         if outer {
@@ -84,7 +124,7 @@ impl<'s> Vm<'s> {
                 }
             }
             let ty = self.result_type(s)?;
-            self.enter(symbol, pc)?;
+            self.enter(symbol, pc, ip)?;
             self.drive(host, depth)?;
             if let Some(kind) = self.terminal {
                 return Err(fault(kind).into());
@@ -98,6 +138,7 @@ impl<'s> Vm<'s> {
         })();
         let result = result.map_err(|e| self.annotate(e));
         self.unwind(depth, base, pc, context);
+        self.ip = ip;
         self.invocations -= 1;
         result
     }
@@ -165,6 +206,7 @@ impl<'s> Vm<'s> {
         let base = self.argument_base(n)?;
         let depth = self.frames.len();
         let pc = self.pc;
+        let ip = self.ip;
         let context = self.context;
         if self.invocations == 0 && self.host_depth == 0 {
             self.fuel = self.state.limits.fuel;
@@ -172,12 +214,13 @@ impl<'s> Vm<'s> {
         }
         self.invocations += 1;
         let result = (|| {
-            self.enter(symbol, pc)?;
+            self.enter(symbol, pc, ip)?;
             self.drive(host, depth)
         })();
         let result = result.map_err(|e| self.annotate(e));
         if result.is_err() {
             self.unwind(depth, base, pc, context);
+            self.ip = ip;
         }
         self.invocations -= 1;
         result
@@ -243,7 +286,7 @@ impl<'s> Vm<'s> {
         self.init_instance(host, id, symbol)?;
         Ok(id)
     }
-    fn entry(&self, s: SymbolRef<'_>) -> Result<u32> {
+    fn entry(&self, s: SymbolRef<'_>) -> Result<(u32, usize)> {
         if s.is_member()
             || s.is_external()
             || !matches!(
@@ -260,16 +303,28 @@ impl<'s> Vm<'s> {
         let pc = s
             .address()
             .ok_or_else(|| fault(FaultKind::CodeBoundary).at(s.id()))? as u32;
-        if !self.code.decoded().contains(pc) {
+        // The entry table holds the position of every symbol address that
+        // starts an instruction.
+        let Some(ip) = self.code.entry(s.index()) else {
             return Err(fault(FaultKind::CodeBoundary)
                 .at(s.id())
                 .with_detail(FaultDetail::Address { requested: pc }));
-        }
-        Ok(pc)
+        };
+        Ok((pc, ip))
     }
-    fn make_frame(&mut self, symbol: SymbolId, return_pc: u32) -> Result<()> {
+    /// Frames a call returning to `return_pc`, which starts the instruction at
+    /// position `return_ip`. Faults in this order: missing arguments, the frame
+    /// limit, then the callee's return signature.
+    fn make_frame(&mut self, symbol: SymbolId, return_pc: u32, return_ip: usize) -> Result<()> {
         let s = self.script().get(symbol)?;
         let count = self.parameter_count(s)?;
+        let base = self.frame_room(count)?;
+        let result = self.result_type(s)?;
+        self.push_frame(symbol, return_pc, return_ip, base, result)
+    }
+    /// Checks that `count` arguments are above the current frame floor and that
+    /// one more frame fits, and returns the new frame's stack base.
+    fn frame_room(&mut self, count: usize) -> Result<usize> {
         let base = self.argument_base(count)?;
         let rr = checked(
             self.frames.len(),
@@ -280,7 +335,18 @@ impl<'s> Vm<'s> {
         self.note(rr)?;
         let rr = reserve(&mut self.frames, 1);
         self.note(rr)?;
-        let result = self.result_type(s)?;
+        Ok(base)
+    }
+    /// Pushes a frame after [`Self::frame_room`] returned `base`, with the
+    /// result type derived from the callee or recorded by its binding.
+    fn push_frame(
+        &mut self,
+        symbol: SymbolId,
+        return_pc: u32,
+        return_ip: usize,
+        base: usize,
+        result: DataType,
+    ) -> Result<()> {
         let mut locals = Vec::new();
         let mut local_cells = 0;
         let mut local_bytes = 0;
@@ -327,14 +393,16 @@ impl<'s> Vm<'s> {
             locals,
             local_cells,
             local_bytes,
+            return_ip,
         });
         Ok(())
     }
-    fn enter(&mut self, symbol: SymbolId, return_pc: u32) -> Result<()> {
-        let pc = self.entry(self.script().get(symbol)?)?;
-        let rr = self.make_frame(symbol, return_pc);
+    fn enter(&mut self, symbol: SymbolId, return_pc: u32, return_ip: usize) -> Result<()> {
+        let (pc, ip) = self.entry(self.script().get(symbol)?)?;
+        let rr = self.make_frame(symbol, return_pc, return_ip);
         self.note(rr)?;
         self.pc = pc;
+        self.ip = ip;
         Ok(())
     }
     fn restore_locals(&mut self, frame: &mut Frame) {
@@ -381,6 +449,7 @@ impl<'s> Vm<'s> {
         };
         self.restore_locals(&mut frame);
         self.pc = frame.trace.return_pc;
+        self.ip = frame.return_ip;
         self.context = frame.trace.context;
         outcome
     }
@@ -438,18 +507,25 @@ impl<'s> Vm<'s> {
                 return Err(self.annotate(fault(FaultKind::Limit(LimitKind::Fuel)).into()));
             }
             self.fuel -= 1;
-            let ins = self.code.instruction_at(self.pc).map_err(Fault::from)?;
-            let result = self.execute(host, ins);
+            let ip = self.code.locate(self.ip, self.pc).map_err(Fault::from)?;
+            #[cfg(test)]
+            if ip != self.ip {
+                self.position_searches += 1;
+            }
+            let (ins, link) = self.code.step(ip);
+            self.ip = ip;
+            let result = self.execute(host, ins, ip, link);
             match result {
                 Ok(Flow::Next) => {
                     self.pc = self
                         .pc
                         .checked_add(u32::from(ins.size()))
-                        .ok_or_else(|| fault(FaultKind::CodeBoundary))?
+                        .ok_or_else(|| fault(FaultKind::CodeBoundary))?;
+                    self.ip = ip + 1;
                 }
                 Ok(Flow::Jump) => {}
                 Ok(Flow::Return) => self.leave()?,
-                Err(e) => self.recover(host, ins, e)?,
+                Err(e) => self.recover(host, ins, ip, e)?,
             }
         }
         Ok(())
@@ -460,6 +536,7 @@ impl<'s> Vm<'s> {
         &mut self,
         host: &mut H,
         ins: Instruction,
+        ip: usize,
         e: VmError<H::Error>,
     ) -> VmResult<(), H::Error> {
         let e = self.annotate(e);
@@ -476,6 +553,7 @@ impl<'s> Vm<'s> {
                         .pc
                         .checked_add(u32::from(ins.size()))
                         .ok_or_else(|| fault(FaultKind::CodeBoundary))?;
+                    self.ip = ip + 1;
                 }
             }
             Recovery::Return => self.leave()?,
@@ -483,40 +561,65 @@ impl<'s> Vm<'s> {
         }
         Ok(())
     }
-    fn copied_binding(&mut self, index: usize, over: bool) -> Result<Binding> {
+    fn copied_binding(&self, index: usize, over: bool) -> CallBinding {
         let b = if over {
             &self.overrides[index]
         } else {
             &self.externals[index]
         };
-        let mut parameters = Vec::new();
-        reserve(&mut parameters, b.parameters.len())?;
-        parameters.extend_from_slice(&b.parameters);
-        Ok(Binding {
+        CallBinding {
             symbol: b.symbol,
             key: b.key,
-            parameters,
+            parameters: Arc::clone(&b.parameters),
             result: b.result,
             raw: b.raw,
-            address: b.address,
-        })
+        }
     }
+    /// A cleared argument buffer for one callback; see [`Self::recycle_arguments`].
+    fn argument_buffer(&mut self) -> Vec<Argument> {
+        self.argument_buffers.pop().unwrap_or_default()
+    }
+    /// Returns a callback's buffer for reuse, dropping its arguments.
+    fn recycle_arguments(&mut self, mut buffer: Vec<Argument>) {
+        buffer.clear();
+        if self.argument_buffers.try_reserve(1).is_ok() {
+            self.argument_buffers.push(buffer);
+        }
+    }
+    /// Pops the arguments for `params` into `out` in declaration order and
+    /// returns the string bytes charged for them. Without `out` they are still
+    /// popped, resolved and charged, then dropped.
     fn arguments<H: Host>(
         &mut self,
         host: &mut H,
         callable: SymbolId,
         params: &[Parameter],
-    ) -> VmResult<(Vec<Argument>, usize), H::Error> {
-        let mut args = Vec::new();
-        let rr = reserve(&mut args, params.len());
-        self.note(rr)?;
+        mut out: Option<&mut Vec<Argument>>,
+    ) -> VmResult<usize, H::Error> {
+        if let Some(args) = out.as_deref_mut() {
+            let rr = reserve(args, params.len());
+            self.note(rr)?;
+        }
         let mut bytes = 0;
+        let keep = out.is_some();
         let result = (|| {
             for (position, &p) in params.iter().enumerate().rev() {
                 // Charge each owned value before resolving the next reference:
                 // repeated references must not allocate an oversized packet first.
+                let mut uncopied = 0;
                 let value = (|| -> VmResult<Argument, H::Error> {
                     Ok(match p {
+                        Parameter::Value(DataType::String)
+                            if !keep && let Some(len) = self.global_string_len() =>
+                        {
+                            // An unkept string global is checked as its copy
+                            // would be, then popped without copying it.
+                            let rr = checked(0, len, self.free_strings(), LimitKind::Strings);
+                            self.note(rr)?;
+                            self.drop_top_scalar();
+                            uncopied = len;
+                            Argument::Value(Value::Bytes(Vec::new()))
+                        }
                         Parameter::InstanceReference => {
                             let r = self.pop_reference()?.symbol()?;
                             let given = self
@@ -556,31 +659,39 @@ impl<'s> Vm<'s> {
                     error
                 })?;
                 let added = match &value {
-                    Argument::Value(v) => v.bytes_len(),
+                    Argument::Value(v) => v.bytes_len() + uncopied,
                     Argument::Reference(_) => 0,
                 };
                 let rr = checked(0, added, self.free_strings(), LimitKind::Strings);
                 self.note(rr)?;
                 self.temporary_bytes += added;
                 bytes += added;
-                args.push(value);
+                if let Some(args) = out.as_deref_mut() {
+                    args.push(value);
+                }
             }
             Ok(())
         })();
         if let Err(e) = result {
             self.temporary_bytes -= bytes;
+            if let Some(args) = out {
+                args.clear();
+            }
             return Err(e);
         }
-        args.reverse();
-        Ok((args, bytes))
+        if let Some(args) = out {
+            args.reverse();
+        }
+        Ok(bytes)
     }
     fn invoke<H: Host>(
         &mut self,
         host: &mut H,
         selected: SymbolId,
-        b: Binding,
+        b: CallBinding,
         kind: CallKind,
         next: u32,
+        return_ip: usize,
     ) -> VmResult<(), H::Error> {
         if b.raw {
             return self.invoke_raw(host, selected, b.key, kind);
@@ -588,10 +699,11 @@ impl<'s> Vm<'s> {
         let depth = self.frames.len();
         let old_pc = self.pc;
         let old_context = self.context;
-        self.make_frame(b.symbol, next)?;
-        let base = self.frames.last().unwrap().trace.stack_base;
+        let base = self.frame_room(b.parameters.len())?;
+        self.push_frame(b.symbol, next, return_ip, base, b.result)?;
+        let mut arguments = self.argument_buffer();
         let result = (|| {
-            let (arguments, bytes) = self.arguments(host, b.symbol, &b.parameters)?;
+            let bytes = self.arguments(host, b.symbol, &b.parameters, Some(&mut arguments))?;
             let result = self.host(host, |h, cx| {
                 h.call(
                     cx,
@@ -599,10 +711,11 @@ impl<'s> Vm<'s> {
                         binding: b.key,
                         symbol: selected,
                         kind,
-                        arguments,
+                        arguments: &mut arguments,
                     },
                 )
             });
+            arguments.clear();
             self.temporary_bytes -= bytes;
             let result = result?;
             let given = returned(&result);
@@ -624,6 +737,7 @@ impl<'s> Vm<'s> {
             Ok(())
         })()
         .map_err(|e| self.annotate(e));
+        self.recycle_arguments(arguments);
         if result.is_err() {
             self.unwind(depth, base, old_pc, old_context);
             if b.result != DataType::Void && self.terminal.is_none() {
@@ -647,7 +761,7 @@ impl<'s> Vm<'s> {
                     binding: key,
                     symbol: selected,
                     kind,
-                    arguments: Vec::new(),
+                    arguments: &mut [],
                 },
             )
         })?;
@@ -666,12 +780,13 @@ impl<'s> Vm<'s> {
         &mut self,
         host: &mut H,
         symbol: SymbolId,
+        binding: Option<usize>,
         next: u32,
+        return_ip: usize,
     ) -> VmResult<(), H::Error> {
-        if let Some(i) = self.external_index(symbol) {
-            let rr = self.copied_binding(i, false);
-            let b = self.note(rr)?;
-            return self.invoke(host, symbol, b, CallKind::External, next);
+        if let Some(i) = binding {
+            let b = self.copied_binding(i, false);
+            return self.invoke(host, symbol, b, CallKind::External, next, return_ip);
         }
         self.external_default(host, symbol)
     }
@@ -691,7 +806,7 @@ impl<'s> Vm<'s> {
                             binding: key,
                             symbol,
                             kind: CallKind::RawDefault,
-                            arguments: Vec::new(),
+                            arguments: &mut [],
                         },
                     )
                 })?;
@@ -707,13 +822,23 @@ impl<'s> Vm<'s> {
                 Ok(())
             }
             DefaultBinding::Zero(observer) => {
-                let mut params = Vec::new();
-                for p in self.script().parameters(symbol).map_err(Fault::from)? {
-                    reserve(&mut params, 1)?;
-                    params.push(Parameter::Value(p.data_type()));
-                }
+                let declared = self.script().parameters(symbol).map_err(Fault::from)?;
+                let params = Parameters::collect(
+                    declared.len(),
+                    declared.map(|p| Parameter::Value(p.data_type())),
+                )?;
                 let ty = self.result_type(self.script().get(symbol).map_err(Fault::from)?)?;
-                let (args, bytes) = self.arguments(host, symbol, &params)?;
+                let mut args = observer.map(|_| self.argument_buffer());
+                let bytes = self.arguments(host, symbol, params.as_slice(), args.as_mut());
+                let bytes = match bytes {
+                    Ok(bytes) => bytes,
+                    Err(e) => {
+                        if let Some(args) = args {
+                            self.recycle_arguments(args);
+                        }
+                        return Err(e);
+                    }
+                };
                 let result = (|| {
                     if ty != DataType::Void {
                         self.push(default_value(ty)?)?;
@@ -726,10 +851,14 @@ impl<'s> Vm<'s> {
                                     binding: key,
                                     symbol,
                                     kind: CallKind::DefaultExternal,
-                                    arguments: args,
+                                    arguments: args.as_deref_mut().unwrap_or_default(),
                                 },
                             )
-                        })?;
+                        });
+                        if let Some(args) = &mut args {
+                            args.clear();
+                        }
+                        let r = r?;
                         if !matches!(r, HostReturn::Void | HostReturn::StackHandled) {
                             return Err(fault(FaultKind::InvalidReturn)
                                 .with_detail(FaultDetail::Return {
@@ -743,11 +872,20 @@ impl<'s> Vm<'s> {
                     Ok(())
                 })();
                 self.temporary_bytes -= bytes;
+                if let Some(args) = args {
+                    self.recycle_arguments(args);
+                }
                 result
             }
         }
     }
-    fn execute<H: Host>(&mut self, host: &mut H, ins: Instruction) -> VmResult<Flow, H::Error> {
+    fn execute<H: Host>(
+        &mut self,
+        host: &mut H,
+        ins: Instruction,
+        ip: usize,
+        link: u32,
+    ) -> VmResult<Flow, H::Error> {
         use Opcode::*;
         match ins.op {
             Nop => Ok(Flow::Next),
@@ -761,9 +899,9 @@ impl<'s> Vm<'s> {
                 Ok(Flow::Next)
             }
             Pushv | Pushvi | Pushvv => self.exec_push(host, ins),
-            B | Bz => self.exec_branch(host, ins),
-            Bl => self.exec_call(host, ins),
-            Be => self.exec_external(host, ins),
+            B | Bz => self.exec_branch(host, ins, link),
+            Bl => self.exec_call(host, ins, ip, link),
+            Be => self.exec_external(host, ins, ip),
             Gmovi => {
                 let Operand::Symbol(i) = ins.operand else {
                     unreachable!()
@@ -810,42 +948,57 @@ impl<'s> Vm<'s> {
                 Trap::Handled => {}
             }
         } else {
-            self.push_ref(reference)?;
+            // `reference` checked the symbol and context.
+            self.push_stack(StackValue::Reference(reference))?;
         }
         Ok(Flow::Next)
     }
-    fn exec_branch<H: Host>(&mut self, host: &mut H, ins: Instruction) -> VmResult<Flow, H::Error> {
+    fn exec_branch<H: Host>(
+        &mut self,
+        host: &mut H,
+        ins: Instruction,
+        target: u32,
+    ) -> VmResult<Flow, H::Error> {
         let Operand::Address(pc) = ins.operand else {
             unreachable!()
         };
         if ins.op == Opcode::B || self.pop_int(host)? == 0 {
-            self.jump(pc)?;
+            // Validation resolved the target to an instruction boundary.
+            self.pc = pc;
+            self.ip = target as usize;
             Ok(Flow::Jump)
         } else {
             Ok(Flow::Next)
         }
     }
-    fn exec_call<H: Host>(&mut self, host: &mut H, ins: Instruction) -> VmResult<Flow, H::Error> {
+    fn exec_call<H: Host>(
+        &mut self,
+        host: &mut H,
+        ins: Instruction,
+        ip: usize,
+        callee: u32,
+    ) -> VmResult<Flow, H::Error> {
         let Operand::Address(pc) = ins.operand else {
             unreachable!()
         };
+        // Validation resolved the call target to its last address alias.
         let id = self
             .script()
-            .find_address(pc)
+            .symbol(callee)
             .ok_or_else(|| {
                 fault(FaultKind::NotFound).with_detail(FaultDetail::Address { requested: pc })
             })?
             .id();
         if let Some(i) = self.override_index(pc) {
-            let rr = self.copied_binding(i, true);
-            let b = self.note(rr)?;
+            let b = self.copied_binding(i, true);
             let kind = if b.raw {
                 CallKind::RawOverride
             } else {
                 CallKind::Override
             };
             let raw = b.raw;
-            let result = self.invoke(host, id, b, kind, ins.offset + u32::from(ins.size()));
+            let next = ins.offset + u32::from(ins.size());
+            let result = self.invoke(host, id, b, kind, next, ip + 1);
             if raw {
                 self.guard_return(id, result)?;
                 Ok(Flow::Next)
@@ -854,7 +1007,7 @@ impl<'s> Vm<'s> {
                 Ok(Flow::Jump)
             }
         } else {
-            self.enter(id, ins.offset + u32::from(ins.size()))?;
+            self.enter(id, ins.offset + u32::from(ins.size()), ip + 1)?;
             Ok(Flow::Jump)
         }
     }
@@ -862,13 +1015,16 @@ impl<'s> Vm<'s> {
         &mut self,
         host: &mut H,
         ins: Instruction,
+        ip: usize,
     ) -> VmResult<Flow, H::Error> {
         let Operand::Symbol(i) = ins.operand else {
             unreachable!()
         };
         let id = self.symbol_id(i)?;
-        let framed = self.external_index(id).is_some();
-        let result = self.external(host, id, ins.offset + u32::from(ins.size()));
+        let binding = self.external_index(id);
+        let framed = binding.is_some();
+        let next = ins.offset + u32::from(ins.size());
+        let result = self.external(host, id, binding, next, ip + 1);
         if framed {
             result?;
         } else {
@@ -915,7 +1071,7 @@ impl<'s> Vm<'s> {
                 Movs => Value::Bytes(self.pop_string(host)?),
                 _ => unreachable!(),
             };
-            self.write_reference(host, target, value)?;
+            self.write_stacked(host, target, value)?;
         }
         Ok(Flow::Next)
     }
@@ -939,7 +1095,7 @@ impl<'s> Vm<'s> {
             return Ok(Flow::Next);
         }
         let a = self
-            .read_reference(host, target)?
+            .read_stacked(host, target)?
             .as_int()
             .map_err(|e| e.extracted(Some(target.symbol)))?;
         let value = match op {
@@ -951,7 +1107,7 @@ impl<'s> Vm<'s> {
                 .ok_or_else(|| fault(FaultKind::DivisionOverflow))?,
             _ => unreachable!(),
         };
-        self.write_reference(host, target, Value::Int(value))?;
+        self.write_stacked(host, target, Value::Int(value))?;
         Ok(Flow::Next)
     }
     fn exec_unary<H: Host>(&mut self, host: &mut H, op: Opcode) -> VmResult<Flow, H::Error> {
@@ -1008,5 +1164,130 @@ impl<'s> Vm<'s> {
         };
         self.push(Value::Int(n))?;
         Ok(Flow::Next)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::daedalus::Limits as ScriptLimits;
+
+    fn word(out: &mut Vec<u8>, n: u32) {
+        out.extend_from_slice(&n.to_le_bytes());
+    }
+    fn op(code: &mut Vec<u8>, opcode: u8, operand: u32) {
+        code.push(opcode);
+        word(code, operand);
+    }
+    /// A symbol with `count | type << 12 | flags << 16` properties and one data word.
+    fn sym(name: &[u8], ty: u32, flags: u32, vary: u32, data: u32) -> Vec<u8> {
+        let mut out = Vec::new();
+        word(&mut out, 1);
+        out.extend_from_slice(name);
+        out.push(10);
+        word(&mut out, vary);
+        word(&mut out, ty << 12 | flags << 16);
+        for _ in 0..5 {
+            word(&mut out, 0);
+        }
+        word(&mut out, data);
+        word(&mut out, u32::MAX);
+        out
+    }
+    fn script(symbols: &[Vec<u8>], code: &[u8]) -> Script {
+        let mut bytes = vec![50];
+        word(&mut bytes, symbols.len() as u32);
+        for i in 0..symbols.len() {
+            word(&mut bytes, i as u32);
+        }
+        for s in symbols {
+            bytes.extend_from_slice(s);
+        }
+        word(&mut bytes, code.len() as u32);
+        bytes.extend_from_slice(code);
+        Script::from_bytes(&bytes, ScriptLimits::default()).unwrap()
+    }
+    /// Answers externals with void, calls F again from inside the first one,
+    /// and continues after every fault.
+    struct Lenient {
+        nested: Option<SymbolId>,
+    }
+    impl Host for Lenient {
+        type Error = Infallible;
+        fn call(
+            &mut self,
+            cx: &mut HostContext<'_, '_>,
+            _: HostCall<'_>,
+        ) -> VmResult<HostReturn, Self::Error> {
+            if let Some(f) = self.nested.take() {
+                cx.call(self, f, Vec::new())?;
+            }
+            Ok(HostReturn::Void)
+        }
+        fn exception(
+            &mut self,
+            _: &mut HostContext<'_, '_>,
+            _: &VmError<Self::Error>,
+        ) -> VmResult<Recovery, Self::Error> {
+            Ok(Recovery::Continue)
+        }
+    }
+
+    #[test]
+    fn calls_returns_reentry_and_recovery_keep_the_position_hint_current() {
+        // F: BL G; BE EXT; PUSHI 0; PUSHI 1; DIV; BL G; BE EXT; RSR.  G: BE EXT; RSR
+        let mut code = Vec::new();
+        let g = 32;
+        op(&mut code, 61, g);
+        op(&mut code, 62, 2);
+        op(&mut code, 64, 0);
+        op(&mut code, 64, 1);
+        code.push(3);
+        op(&mut code, 61, g);
+        op(&mut code, 62, 2);
+        code.push(60);
+        assert_eq!(code.len() as u32, g);
+        op(&mut code, 62, 2);
+        code.push(60);
+        let script = script(
+            &[
+                sym(b"F", 5, 1, 0, 0),
+                sym(b"G", 5, 1, 0, g),
+                sym(b"EXT", 5, 9, 0, u32::MAX),
+            ],
+            &code,
+        );
+        let f = script.symbol(0).unwrap().id();
+        let mut vm = Vm::new(
+            script.validate_code(DecodeLimits::default()).unwrap(),
+            Policy::default(),
+            Limits::default(),
+        )
+        .unwrap();
+        vm.register_external(script.symbol(2).unwrap().id(), 1, &[], DataType::Void)
+            .unwrap();
+        let mut host = Lenient { nested: Some(f) };
+        vm.call(&mut host, f, Vec::new()).unwrap();
+        assert!(host.nested.is_none());
+        // The division faulted twice (outer and nested run) and was continued.
+        assert_eq!(vm.position_searches, 0);
+    }
+
+    #[test]
+    fn parameter_copies_are_inline_up_to_the_limit_and_exact_beyond_it() {
+        for len in [0, 1, INLINE_PARAMETERS, INLINE_PARAMETERS + 1, 40] {
+            let list: Vec<Parameter> = (0..len)
+                .map(|i| {
+                    if i % 3 == 0 {
+                        Parameter::InstanceReference
+                    } else {
+                        Parameter::Value(DataType::Int)
+                    }
+                })
+                .collect();
+            let copy = Parameters::collect(len, list.iter().copied()).unwrap();
+            assert_eq!(copy.as_slice(), list.as_slice());
+            assert_eq!(copy.heap.is_empty(), len <= INLINE_PARAMETERS);
+        }
     }
 }

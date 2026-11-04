@@ -126,6 +126,7 @@ impl<'s> RuntimeState<'s> {
     pub fn binding_count(&self) -> usize {
         self.classes.iter().map(|c| 1 + c.members.len()).sum()
     }
+    #[inline]
     pub fn runtime_count(&self, symbol: SymbolId) -> Result<usize> {
         let s = self.script.get(symbol)?;
         Ok(if s.is_member() {
@@ -134,6 +135,7 @@ impl<'s> RuntimeState<'s> {
             self.slots[s.index() as usize].values.len()
         })
     }
+    #[inline]
     pub fn global(&self, symbol: SymbolId, index: usize) -> Result<&Value> {
         let s = self.script.get(symbol)?;
         if s.is_member() {
@@ -212,6 +214,7 @@ impl<'s> RuntimeState<'s> {
         self.slots[s.index() as usize].trap = enabled;
         Ok(())
     }
+    #[inline]
     pub fn access_trap(&self, symbol: SymbolId) -> Result<bool> {
         let s = self.script.get(symbol)?;
         Ok(self.slots[s.index() as usize].trap)
@@ -228,6 +231,7 @@ impl<'s> RuntimeState<'s> {
         self.slots[s.index() as usize].locals = enabled;
         Ok(())
     }
+    #[inline]
     pub fn recursive_locals(&self, symbol: SymbolId) -> Result<bool> {
         let s = self.script.get(symbol)?;
         Ok(self.slots[s.index() as usize].locals)
@@ -439,12 +443,14 @@ impl<'s> RuntimeState<'s> {
             }),
         )
     }
+    #[inline]
     pub(super) fn check_value(&self, value: &Value) -> Result<()> {
         if let Value::Instance(Some(id)) = value {
             self.instance(*id)?;
         }
         Ok(())
     }
+    #[inline]
     pub(super) fn instance(&self, id: InstanceId) -> Result<&Instance> {
         if id.owner != self.owner {
             return Err(fault(FaultKind::InvalidHandle));

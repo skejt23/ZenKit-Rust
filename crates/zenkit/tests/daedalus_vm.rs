@@ -367,6 +367,67 @@ fn callback_arguments_stay_charged_through_registered_and_default_reentry() {
 }
 
 #[test]
+fn borrowed_callback_arguments_are_private_to_each_nested_call_and_reused() {
+    struct App {
+        depth: usize,
+        calls: usize,
+    }
+    impl Host for App {
+        type Error = Infallible;
+        fn call(
+            &mut self,
+            cx: &mut HostContext<'_, '_>,
+            call: HostCall,
+        ) -> VmResult<HostReturn, Self::Error> {
+            self.calls += 1;
+            let [
+                Argument::Value(Value::Bytes(a)),
+                Argument::Value(Value::Bytes(b)),
+            ] = call.arguments
+            else {
+                panic!("two strings")
+            };
+            assert_eq!((a.as_slice(), b.as_slice()), (&b"four"[..], &b"four"[..]));
+            let taken = std::mem::take(a);
+            if self.depth < 3 {
+                self.depth += 1;
+                let function = cx.script().find_name(b"F").unwrap().id();
+                cx.call(self, function, Vec::new())?;
+                self.depth -= 1;
+            }
+            // The nested calls used their own buffers.
+            assert!(a.is_empty());
+            assert_eq!(
+                (taken.as_slice(), b.as_slice()),
+                (&b"four"[..], &b"four"[..])
+            );
+            Ok(HostReturn::Void)
+        }
+    }
+    let script = string_packet_script(2);
+    let mut vm = Vm::from_script(
+        &script,
+        DecodeLimits::default(),
+        Policy::default(),
+        Limits::default(),
+    )
+    .unwrap();
+    vm.register_external(
+        id(&script, 1),
+        1,
+        &[Parameter::Value(DataType::String); 2],
+        DataType::Void,
+    )
+    .unwrap();
+    let mut host = App { depth: 0, calls: 0 };
+    for round in 1..=3 {
+        vm.call(&mut host, id(&script, 0), Vec::new()).unwrap();
+        assert_eq!(host.calls, 4 * round);
+        assert_eq!((vm.stack_len(), vm.call_depth()), (0, 0));
+    }
+}
+
+#[test]
 fn owned_temporary_references_can_be_popped_and_requeued_without_fake_symbols() {
     let script = program(
         vec![sym(b"F", 5, 0, 1, 0, &0u32.to_le_bytes(), -1)],
@@ -628,7 +689,7 @@ fn overrides_default_function_values_and_raw_stack_routes_are_distinct() {
                     Ok(HostReturn::StackHandled)
                 }
                 CallKind::External => {
-                    let Argument::Value(v) = call.arguments.into_iter().next().unwrap() else {
+                    let [Argument::Value(v)] = call.arguments else {
                         panic!()
                     };
                     Ok(HostReturn::Value(Value::Int(v.as_int()? + 1)))
@@ -1177,4 +1238,161 @@ fn global_references_are_script_relative_while_captured_instances_are_runtime_ow
         std::mem::size_of::<VmError<Infallible>>(),
         std::mem::size_of::<VmError<std::io::Error>>()
     );
+}
+
+#[test]
+fn execution_follows_host_moves_of_the_program_counter() {
+    // 0: BE EXT; 5: PUSHI 1; 10: RSR; 11: PUSHI 2; 16: PUSHI 3; 21: RSR
+    // 22: G: PUSHI 0; PUSHI 1; DIV; PUSHI 4; RSR; 39: PUSHI 9; RSR
+    let mut code = Vec::new();
+    op(&mut code, 62, 1);
+    op(&mut code, 64, 1);
+    code.push(60);
+    op(&mut code, 64, 2);
+    op(&mut code, 64, 3);
+    code.push(60);
+    op(&mut code, 64, 0);
+    op(&mut code, 64, 1);
+    code.push(3);
+    op(&mut code, 64, 4);
+    code.push(60);
+    op(&mut code, 64, 9);
+    code.push(60);
+    let script = program(
+        vec![
+            sym(b"F", 5, 0, 3, 2, &0u32.to_le_bytes(), -1),
+            sym(b"EXT", 5, 0, 9, 0, &u32::MAX.to_le_bytes(), -1),
+            sym(b"G", 5, 0, 3, 2, &22u32.to_le_bytes(), -1),
+        ],
+        code,
+    );
+    struct Mover(Option<u32>);
+    impl Host for Mover {
+        type Error = Infallible;
+        fn call(
+            &mut self,
+            cx: &mut HostContext<'_, '_>,
+            _: HostCall,
+        ) -> VmResult<HostReturn, Self::Error> {
+            if let Some(pc) = self.0 {
+                cx.vm().jump(pc)?;
+            }
+            Ok(HostReturn::Void)
+        }
+        fn exception(
+            &mut self,
+            _: &mut HostContext<'_, '_>,
+            _: &VmError<Self::Error>,
+        ) -> VmResult<Recovery, Self::Error> {
+            Ok(Recovery::Jump(39))
+        }
+    }
+    let mut vm = Vm::new(
+        script.validate_code(DecodeLimits::default()).unwrap(),
+        Policy::default(),
+        Limits::default(),
+    )
+    .unwrap();
+    vm.default_external_raw(7);
+    let run = |vm: &mut Vm<'_>, host: &mut Mover, f: u32| {
+        vm.call(host, id(&script, f), Vec::new())
+            .unwrap()
+            .unwrap()
+            .as_int()
+            .unwrap()
+    };
+    assert_eq!(run(&mut vm, &mut Mover(None), 0), 1);
+    // An unframed external continues after its own width from the moved PC.
+    assert_eq!(run(&mut vm, &mut Mover(Some(11)), 0), 3);
+    assert_eq!(run(&mut vm, &mut Mover(None), 0), 1);
+    // A recovery jump continues at its target.
+    assert_eq!(run(&mut vm, &mut Mover(None), 2), 9);
+    // Continuing past a one-byte instruction lands inside PUSHI 2.
+    let e = vm
+        .call(&mut Mover(Some(10)), id(&script, 0), Vec::new())
+        .unwrap_err();
+    assert_eq!(
+        e.fault.kind,
+        FaultKind::Wire(zenkit::ErrorKind::InvalidData)
+    );
+    assert_eq!((vm.call_depth(), vm.stack_len()), (0, 0));
+}
+
+#[test]
+fn frame_room_faults_precede_a_callee_return_signature_fault() {
+    // G: BL F; RSR.  F declares a return value of type void, an invalid signature.
+    let mut code = Vec::new();
+    op(&mut code, 61, 6);
+    code.push(60);
+    code.push(60);
+    let symbols = |params: u32| {
+        let mut v = vec![
+            sym(b"G", 5, 0, 1, 0, &0u32.to_le_bytes(), -1),
+            sym(b"F", 5, params, 3, 0, &6u32.to_le_bytes(), -1),
+        ];
+        if params == 1 {
+            v.push(sym(b"F.X", 2, 1, 0, 0, &0u32.to_le_bytes(), -1));
+        }
+        v
+    };
+    let run = |params: u32, frames: usize| {
+        let script = program(symbols(params), code.clone());
+        let mut vm = Vm::new(
+            script.validate_code(DecodeLimits::default()).unwrap(),
+            Policy::default(),
+            Limits {
+                frames,
+                ..Limits::default()
+            },
+        )
+        .unwrap();
+        vm.call(&mut NoHost, id(&script, 0), Vec::new())
+            .unwrap_err()
+            .fault
+            .kind
+    };
+    assert_eq!(run(0, 4), FaultKind::Signature);
+    assert_eq!(run(0, 1), FaultKind::Limit(LimitKind::Frames));
+    assert_eq!(run(1, 4), FaultKind::StackUnderflow);
+}
+
+#[test]
+fn unobserved_default_externals_check_string_arguments_without_keeping_them() {
+    // F: PUSHV S; BE EXT; PUSHV S; BE EXT; PUSHI 7; RSR
+    let mut code = Vec::new();
+    for _ in 0..2 {
+        op(&mut code, 65, 3);
+        op(&mut code, 62, 1);
+    }
+    op(&mut code, 64, 7);
+    code.push(60);
+    let script = program(
+        vec![
+            sym(b"F", 5, 0, 3, 2, &0u32.to_le_bytes(), -1),
+            sym(b"EXT", 5, 1, 11, 2, &u32::MAX.to_le_bytes(), -1),
+            sym(b"EXT.TEXT", 3, 1, 0, 0, b"\n", -1),
+            sym(b"S", 3, 1, 0, 0, b"0123456789\n", -1),
+        ],
+        code,
+    );
+    let run = |string_bytes: usize| {
+        let mut vm = Vm::new(
+            script.validate_code(DecodeLimits::default()).unwrap(),
+            Policy::default(),
+            Limits {
+                string_bytes,
+                ..Limits::default()
+            },
+        )
+        .unwrap();
+        vm.default_external_zero(None);
+        let result = vm
+            .call(&mut NoHost, id(&script, 0), Vec::new())
+            .map(|v| v.unwrap().as_int().unwrap())
+            .map_err(|e| e.fault.kind);
+        (result, vm.stack_len(), vm.state().string_bytes())
+    };
+    assert_eq!(run(1024), (Ok(7), 0, 10));
+    // The copy a kept argument would need does not fit beside the global.
+    assert_eq!(run(15), (Err(FaultKind::Limit(LimitKind::Strings)), 0, 10));
 }

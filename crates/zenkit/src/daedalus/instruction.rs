@@ -96,7 +96,7 @@ impl Opcode {
         Self::Pushvv,
     ];
     pub fn from_raw(value: u8) -> Option<Self> {
-        Self::ALL.into_iter().find(|v| v.raw() == value)
+        OPCODES[usize::from(value)]
     }
     pub fn raw(self) -> u8 {
         self as u8
@@ -120,6 +120,16 @@ impl Opcode {
         self != Self::Movss
     }
 }
+/// Opcode by raw byte value.
+const OPCODES: [Option<Opcode>; 256] = {
+    let mut table = [None; 256];
+    let mut i = 0;
+    while i < Opcode::ALL.len() {
+        table[Opcode::ALL[i] as usize] = Some(Opcode::ALL[i]);
+        i += 1;
+    }
+    table
+};
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Operand {
     None,
@@ -140,11 +150,19 @@ impl Instruction {
         self.op.size()
     }
 }
-/// Limits for a complete instruction index. At most one u32 is kept per instruction.
+/// Limits for a complete instruction index, which keeps one u32 per instruction.
+///
+/// `instructions` also bounds an [`Executable`]: it keeps
+/// [`EXECUTABLE_BYTES_PER_INSTRUCTION`] bytes per instruction (the index plus
+/// one decoded step) and 4 bytes per symbol. Size this limit for that memory
+/// when validating for execution; the default allows about 80 MB.
 #[derive(Clone, Copy, Debug)]
 pub struct DecodeLimits {
     pub instructions: usize,
 }
+/// Bytes an [`Executable`] keeps per instruction: a u32 offset and a decoded step.
+pub const EXECUTABLE_BYTES_PER_INSTRUCTION: usize = 4 + std::mem::size_of::<Step>();
+const _: () = assert!(EXECUTABLE_BYTES_PER_INSTRUCTION == 20);
 impl Default for DecodeLimits {
     fn default() -> Self {
         Self {
@@ -246,16 +264,20 @@ impl Script {
                 return Err(at(ErrorKind::InvalidData, s.data_offset()));
             }
         }
+        let mut steps = Vec::new();
+        reserve(&mut steps, decoded.len(), self.code_offset())?;
         for ins in decoded.instructions() {
             let position = self.code_offset() + ins.offset as usize;
             if !ins.op.is_implemented() {
                 return Err(at(ErrorKind::Unsupported, position));
             }
+            let mut link = 0;
             match ins.operand {
                 Operand::Address(address) => {
-                    if !decoded.contains(address) {
+                    let Some(target) = decoded.index_of(address) else {
                         return Err(at(ErrorKind::InvalidData, position + 1));
-                    }
+                    };
+                    link = target as u32;
                     if ins.op == Opcode::Bl {
                         let target = self
                             .find_address(address)
@@ -263,6 +285,7 @@ impl Script {
                         if target.is_external() {
                             return Err(at(ErrorKind::WrongObjectType, position + 1));
                         }
+                        link = target.index();
                     }
                 }
                 Operand::Symbol(index) | Operand::Element { symbol: index, .. } => {
@@ -287,8 +310,24 @@ impl Script {
                 }
                 _ => {}
             }
+            steps.push(Step {
+                operand: ins.operand,
+                link,
+                op: ins.op,
+            });
         }
-        Ok(Executable { decoded })
+        let mut entries = Vec::new();
+        reserve(&mut entries, self.len(), self.code_offset())?;
+        entries.extend(self.symbols().map(|s| {
+            s.address()
+                .and_then(|a| decoded.index_of(a as u32))
+                .map_or(NO_ENTRY, |i| i as u32)
+        }));
+        Ok(Executable {
+            decoded,
+            steps,
+            entries,
+        })
     }
 }
 pub struct Instructions<'a> {
@@ -360,7 +399,11 @@ impl<'a> DecodedCode<'a> {
         &self.offsets
     }
     pub fn contains(&self, offset: u32) -> bool {
-        self.offsets.binary_search(&offset).is_ok()
+        self.index_of(offset).is_some()
+    }
+    /// Position of the instruction starting at `offset` in [`Self::offsets`].
+    pub(crate) fn index_of(&self, offset: u32) -> Option<usize> {
+        self.offsets.binary_search(&offset).ok()
     }
     pub fn instruction_at(&self, offset: u32) -> Result<Instruction> {
         if !self.contains(offset) {
@@ -381,10 +424,32 @@ impl<'a> DecodedCode<'a> {
         })
     }
 }
+/// One validated instruction without its offset, which is kept in the index.
+/// `link` holds a resolved operand: for B and BZ the target's instruction
+/// position, for BL the callee's symbol index, otherwise zero.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Step {
+    pub operand: Operand,
+    pub link: u32,
+    pub op: Opcode,
+}
+/// Symbol without an instruction at its address.
+const NO_ENTRY: u32 = u32::MAX;
+
 /// Checked instruction roles and targets; not an executing VM or a stack proof.
-#[derive(Debug)]
+/// Keeps every instruction decoded with its branch target and call target
+/// resolved, plus each symbol's entry position, so execution does not search.
 pub struct Executable<'a> {
     decoded: DecodedCode<'a>,
+    steps: Vec<Step>,
+    entries: Vec<u32>,
+}
+impl fmt::Debug for Executable<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Executable")
+            .field("decoded", &self.decoded)
+            .finish()
+    }
 }
 impl<'a> Executable<'a> {
     pub fn decoded(&self) -> &DecodedCode<'a> {
@@ -395,5 +460,146 @@ impl<'a> Executable<'a> {
     }
     pub fn instruction_at(&self, offset: u32) -> Result<Instruction> {
         self.decoded.instruction_at(offset)
+    }
+    /// Position of the instruction at `offset`, trying `hint` before searching.
+    /// Fails exactly like [`Self::instruction_at`] for a non-boundary offset.
+    #[inline]
+    pub(crate) fn locate(&self, hint: usize, offset: u32) -> Result<usize> {
+        if self.decoded.offsets.get(hint) == Some(&offset) {
+            return Ok(hint);
+        }
+        self.decoded.index_of(offset).ok_or_else(|| {
+            at(
+                ErrorKind::InvalidData,
+                self.script().code_offset() + offset as usize,
+            )
+        })
+    }
+    /// The instruction at a position returned by [`Self::locate`] or
+    /// [`Self::entry`], with its resolved link.
+    #[inline]
+    pub(crate) fn step(&self, position: usize) -> (Instruction, u32) {
+        let s = self.steps[position];
+        (
+            Instruction {
+                offset: self.decoded.offsets[position],
+                op: s.op,
+                operand: s.operand,
+            },
+            s.link,
+        )
+    }
+    /// Instruction position of a symbol's address, if one starts there.
+    #[inline]
+    pub(crate) fn entry(&self, symbol: u32) -> Option<usize> {
+        self.entries
+            .get(symbol as usize)
+            .filter(|&&i| i != NO_ENTRY)
+            .map(|&i| i as usize)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn word(out: &mut Vec<u8>, n: u32) {
+        out.extend_from_slice(&n.to_le_bytes());
+    }
+    fn symbol(name: &[u8], ty: u32, flags: u32, address: u32) -> Vec<u8> {
+        let mut out = Vec::new();
+        word(&mut out, 1);
+        out.extend_from_slice(name);
+        out.push(10);
+        word(&mut out, 0);
+        word(&mut out, ty << 12 | flags << 16);
+        for _ in 0..5 {
+            word(&mut out, 0);
+        }
+        word(&mut out, address);
+        word(&mut out, u32::MAX);
+        out
+    }
+    fn script(symbols: &[Vec<u8>], code: &[u8]) -> Script {
+        let mut bytes = vec![50];
+        word(&mut bytes, symbols.len() as u32);
+        for i in 0..symbols.len() {
+            word(&mut bytes, i as u32);
+        }
+        for s in symbols {
+            bytes.extend_from_slice(s);
+        }
+        word(&mut bytes, code.len() as u32);
+        bytes.extend_from_slice(code);
+        Script::from_bytes(&bytes, Limits::default()).unwrap()
+    }
+
+    #[test]
+    fn opcode_table_matches_every_raw_byte() {
+        for raw in 0..=u8::MAX {
+            assert_eq!(
+                Opcode::from_raw(raw),
+                Opcode::ALL.into_iter().find(|op| op.raw() == raw)
+            );
+        }
+    }
+
+    #[test]
+    fn steps_keep_each_instruction_with_resolved_branch_and_call_targets() {
+        // 0: F: PUSHI 7; BZ 15; B 0;  15: G: BL 0; BL 15; RSR
+        let mut code = vec![64, 7, 0, 0, 0, 76];
+        word(&mut code, 15);
+        code.push(75);
+        word(&mut code, 0);
+        code.push(61);
+        word(&mut code, 0);
+        code.push(61);
+        word(&mut code, 15);
+        code.push(60);
+        let script = script(
+            &[
+                symbol(b"F", 5, 1, 0),
+                symbol(b"G", 5, 1, 15),
+                // A later alias of F's address; BL takes the last one.
+                symbol(b"P", 5, 1, 0),
+                symbol(b"E", 5, 9, u32::MAX),
+                // Not an address alias, but its address starts an instruction.
+                symbol(b"MID", 5, 0, 5),
+            ],
+            &code,
+        );
+        let code = script.validate_code(DecodeLimits::default()).unwrap();
+        let decoded: Vec<Instruction> = code.decoded().instructions().collect();
+        assert_eq!(decoded.len(), 6);
+        let links: Vec<u32> = (0..decoded.len())
+            .map(|i| {
+                let (ins, link) = code.step(i);
+                assert_eq!(ins, decoded[i]);
+                link
+            })
+            .collect();
+        // BZ 15 and B 0 hold target positions; BL holds the last alias's symbol.
+        assert_eq!(links, [0, 3, 0, 2, 1, 0]);
+        assert_eq!(
+            (0..5).map(|s| code.entry(s)).collect::<Vec<_>>(),
+            [Some(0), Some(3), Some(0), None, Some(1)]
+        );
+        assert_eq!(code.entry(5), None);
+    }
+
+    #[test]
+    fn locate_checks_its_hint_and_fails_like_instruction_lookup() {
+        let script = script(&[], &[64, 1, 0, 0, 0, 45, 60]);
+        let code = script.validate_code(DecodeLimits::default()).unwrap();
+        assert_eq!(code.locate(1, 5).unwrap(), 1);
+        // A stale or out-of-range hint falls back to the index.
+        assert_eq!(code.locate(0, 6).unwrap(), 2);
+        assert_eq!(code.locate(99, 0).unwrap(), 0);
+        for offset in [1, 7, u32::MAX] {
+            let located = code.locate(0, offset).unwrap_err();
+            let looked_up = code.instruction_at(offset).unwrap_err();
+            assert_eq!(located.kind, looked_up.kind);
+            assert_eq!(located.offset, looked_up.offset);
+        }
     }
 }

@@ -1141,14 +1141,17 @@ fn diagnostic_errors_preserve_four_level_string_reentry_on_a_small_stack() {
                     cx: &mut HostContext<'_, '_>,
                     call: HostCall,
                 ) -> VmResult<HostReturn, Self::Error> {
-                    let mut args = call.arguments.into_iter();
-                    let Some(Argument::Value(Value::Bytes(mut a))) = args.next() else {
-                        panic!("first owned string")
+                    let [
+                        Argument::Value(Value::Bytes(a)),
+                        Argument::Value(Value::Bytes(b)),
+                    ] = call.arguments
+                    else {
+                        panic!("two strings")
                     };
-                    let Some(Argument::Value(Value::Bytes(b))) = args.next() else {
-                        panic!("second owned string")
-                    };
-                    assert!(args.next().is_none());
+                    // Borrowed arguments stay valid across the reentrant call
+                    // below; the strings are moved out without copying.
+                    let mut a = std::mem::take(a);
+                    let b = std::mem::take(b);
                     assert_eq!(a, b"alpha");
                     assert_eq!(b, b"beta");
                     self.depth += 1;

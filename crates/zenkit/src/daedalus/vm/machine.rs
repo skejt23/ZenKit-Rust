@@ -8,6 +8,7 @@ pub(super) enum StackValue {
     Reference(Reference),
 }
 impl StackValue {
+    #[inline]
     pub fn bytes(&self) -> usize {
         match self {
             Self::Value(v) => v.bytes_len(),
@@ -21,11 +22,13 @@ pub(super) struct Frame {
     pub locals: Vec<(SymbolId, Vec<Value>)>,
     pub local_cells: usize,
     pub local_bytes: usize,
+    /// Instruction position expected at `trace.return_pc`; checked before use.
+    pub return_ip: usize,
 }
 pub(super) struct Binding {
     pub symbol: SymbolId,
     pub key: u32,
-    pub parameters: Vec<Parameter>,
+    pub parameters: Arc<[Parameter]>,
     pub result: DataType,
     pub raw: bool,
     pub address: u32,
@@ -49,6 +52,9 @@ pub struct Vm<'s> {
     pub(super) overrides: Vec<Binding>,
     pub(super) default: DefaultBinding,
     pub(super) pc: u32,
+    /// Instruction position expected at `pc`. Only a hint: every fetch checks
+    /// it against `pc` and searches the index when they disagree.
+    pub(super) ip: usize,
     pub(super) context: Option<InstanceId>,
     pub(super) temporary_bytes: usize,
     pub(super) snapshot_cells: usize,
@@ -56,6 +62,12 @@ pub struct Vm<'s> {
     pub(super) host_depth: usize,
     pub(super) invocations: usize,
     pub(super) terminal: Option<FaultKind>,
+    /// Fetches whose position hint was stale and needed a search.
+    #[cfg(test)]
+    pub(super) position_searches: usize,
+    /// Emptied callback argument buffers, one per callback nesting level
+    /// reached so far, reused so a callback costs no allocation.
+    pub(super) argument_buffers: Vec<Vec<Argument>>,
 }
 impl fmt::Debug for Vm<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -100,6 +112,7 @@ impl<'s> Vm<'s> {
             overrides: Vec::new(),
             default: DefaultBinding::Error,
             pc: 0,
+            ip: 0,
             context: None,
             temporary_bytes: 0,
             snapshot_cells: 0,
@@ -107,6 +120,9 @@ impl<'s> Vm<'s> {
             host_depth: 0,
             invocations: 0,
             terminal: None,
+            #[cfg(test)]
+            position_searches: 0,
+            argument_buffers: Vec::new(),
         })
     }
     pub fn into_state(self) -> RuntimeState<'s> {
@@ -176,6 +192,7 @@ impl<'s> Vm<'s> {
     pub fn global_item(&self) -> Option<SymbolId> {
         self.global(b"ITEM")
     }
+    #[inline]
     pub(super) fn note<T>(&mut self, result: Result<T>) -> Result<T> {
         if let Err(e) = &result
             && e.is_terminal()
@@ -185,6 +202,7 @@ impl<'s> Vm<'s> {
         }
         result
     }
+    #[inline]
     pub(super) fn free_strings(&self) -> usize {
         self.state
             .limits
@@ -290,6 +308,7 @@ impl<'s> Vm<'s> {
         let rr = self.state.set_opaque_member(id, symbol, index, value);
         self.note(rr)
     }
+    #[inline]
     pub fn reference(
         &self,
         symbol: SymbolId,
@@ -310,10 +329,12 @@ impl<'s> Vm<'s> {
         let r = self.reference(symbol, index, self.context)?;
         self.push_ref(r)
     }
+    #[inline]
     pub fn push_ref(&mut self, r: Reference) -> Result<()> {
         self.reference(r.symbol, r.index, r.context)?;
         self.push_stack(StackValue::Reference(r))
     }
+    #[inline]
     pub fn push(&mut self, value: Value) -> Result<()> {
         self.state.check_value(&value)?;
         self.push_stack(StackValue::Value(value))
@@ -323,7 +344,25 @@ impl<'s> Vm<'s> {
         let v = self.note(r)?;
         self.push(v)
     }
+    #[inline]
     pub(super) fn push_stack(&mut self, value: StackValue) -> Result<()> {
+        // Within the stack and string limits and capacity, the checks below pass.
+        let bytes = value.bytes();
+        if self.stack.len() < self.state.limits.stack
+            && self.stack.len() < self.stack.capacity()
+            && (self.state.bytes + self.temporary_bytes)
+                .checked_add(bytes)
+                .is_some_and(|n| n <= self.state.limits.string_bytes)
+        {
+            self.temporary_bytes += bytes;
+            self.stack.push(value);
+            return Ok(());
+        }
+        self.push_stack_checked(value)
+    }
+    #[cold]
+    #[inline(never)]
+    fn push_stack_checked(&mut self, value: StackValue) -> Result<()> {
         let r = checked(
             self.stack.len(),
             1,
@@ -370,6 +409,7 @@ impl<'s> Vm<'s> {
             StackReference::Temporary(v) => self.push(Value::Bytes(v)),
         }
     }
+    #[inline]
     pub(super) fn stack_empty(&self) -> bool {
         self.stack.len() <= self.frames.last().map_or(0, |f| f.trace.stack_base)
     }
@@ -383,6 +423,7 @@ impl<'s> Vm<'s> {
             .ok_or_else(|| fault(FaultKind::StackUnderflow))?;
         Ok(base)
     }
+    #[inline]
     pub(super) fn pop_stack(&mut self) -> Result<StackValue> {
         if self.stack_empty() {
             return Err(fault(FaultKind::StackUnderflow));
@@ -398,29 +439,126 @@ impl<'s> Vm<'s> {
         }
     }
     pub fn jump(&mut self, pc: u32) -> Result<()> {
-        if !self.code.decoded().contains(pc) {
+        let Some(ip) = self.code.decoded().index_of(pc) else {
             return Err(
                 fault(FaultKind::CodeBoundary).with_detail(FaultDetail::Address { requested: pc })
             );
-        }
+        };
         self.pc = pc;
+        self.ip = ip;
         Ok(())
     }
+    /// The existing global element `index` of a reference's nonmember symbol;
+    /// `None` where [`RuntimeState::global`] would fault. The fast paths below
+    /// resolve stacked references only through this.
+    #[inline]
+    pub(super) fn stacked_global(&self, symbol: SymbolId, index: usize) -> Option<&Value> {
+        let s = self.script().get(symbol).ok()?;
+        if s.is_member() {
+            return None;
+        }
+        self.state.slots[s.index() as usize].values.get(index)
+    }
+    /// The top entry when it is a scalar value or a reference to an existing
+    /// scalar global element: exactly the entries a pop resolves without
+    /// faults, host calls or string copies.
+    #[inline]
+    fn top_scalar(&self) -> Option<&Value> {
+        if self.stack_empty() {
+            return None;
+        }
+        let v = match self.stack.last()? {
+            StackValue::Value(v) => v,
+            StackValue::Reference(r) => self.stacked_global(r.symbol, r.index)?,
+        };
+        (!matches!(v, Value::Bytes(_))).then_some(v)
+    }
+    /// The length of the string global element the top entry refers to.
+    #[inline]
+    pub(super) fn global_string_len(&self) -> Option<usize> {
+        if self.stack_empty() {
+            return None;
+        }
+        let StackValue::Reference(r) = self.stack.last()? else {
+            return None;
+        };
+        match self.stacked_global(r.symbol, r.index)? {
+            Value::Bytes(b) => Some(b.len()),
+            _ => None,
+        }
+    }
+    /// Drops the top entry found by [`Self::top_scalar`] or
+    /// [`Self::global_string_len`]; it holds no string bytes.
+    #[inline]
+    pub(super) fn drop_top_scalar(&mut self) {
+        self.stack.pop();
+    }
+    #[inline]
     pub fn pop_int<H: Host>(&mut self, host: &mut H) -> VmResult<i32, H::Error> {
+        if let Some(&(Value::Int(n) | Value::Function(n))) = self.top_scalar() {
+            self.drop_top_scalar();
+            return Ok(n);
+        }
+        self.pop_int_resolved(host)
+    }
+    fn pop_int_resolved<H: Host>(&mut self, host: &mut H) -> VmResult<i32, H::Error> {
         if self.stack_empty() && self.policy.numeric_underflow_zero {
             return Ok(0);
         }
         let (v, symbol) = self.pop_value_with_symbol(host)?;
         Ok(v.as_int().map_err(|e| e.extracted(symbol))?)
     }
+    #[inline]
     pub fn pop_float<H: Host>(&mut self, host: &mut H) -> VmResult<f32, H::Error> {
+        match self.top_scalar() {
+            Some(&Value::Float(n)) => {
+                self.drop_top_scalar();
+                return Ok(n);
+            }
+            Some(&Value::Int(n)) => {
+                self.drop_top_scalar();
+                return Ok(f32::from_bits(n as u32));
+            }
+            _ => {}
+        }
+        self.pop_float_resolved(host)
+    }
+    fn pop_float_resolved<H: Host>(&mut self, host: &mut H) -> VmResult<f32, H::Error> {
         if self.stack_empty() && self.policy.numeric_underflow_zero {
             return Ok(0.0);
         }
         let (v, symbol) = self.pop_value_with_symbol(host)?;
         Ok(v.as_float().map_err(|e| e.extracted(symbol))?)
     }
+    /// The top entry's instance when it is an instance value or a reference
+    /// to a global whose first element is one.
+    #[inline]
+    fn top_instance(&self) -> Option<Option<InstanceId>> {
+        if self.stack_empty() {
+            return None;
+        }
+        let v = match self.stack.last()? {
+            StackValue::Value(v) => v,
+            // An instance pop reads the first element, whatever the index.
+            StackValue::Reference(r) => self.stacked_global(r.symbol, 0)?,
+        };
+        match v {
+            Value::Instance(i) => Some(*i),
+            _ => None,
+        }
+    }
+    #[inline]
     pub fn pop_instance<H: Host>(
+        &mut self,
+        host: &mut H,
+    ) -> VmResult<Option<InstanceId>, H::Error> {
+        if let Some(i) = self.top_instance() {
+            self.drop_top_scalar();
+            return Ok(i);
+        }
+        self.pop_instance_resolved(host)
+    }
+    fn pop_instance_resolved<H: Host>(
         &mut self,
         _host: &mut H,
     ) -> VmResult<Option<InstanceId>, H::Error> {
@@ -456,8 +594,28 @@ impl<'s> Vm<'s> {
     ) -> VmResult<(Value, Option<SymbolId>), H::Error> {
         match self.pop_stack()? {
             StackValue::Value(v) => Ok((v, None)),
-            StackValue::Reference(r) => self.read_reference(host, r).map(|v| (v, Some(r.symbol))),
+            StackValue::Reference(r) => self.read_stacked(host, r).map(|v| (v, Some(r.symbol))),
         }
+    }
+    /// [`Self::read_reference`] for a reference from this VM's stack. Its symbol
+    /// and context were checked when it was pushed, and instances are never
+    /// removed, so a scalar global element is copied directly.
+    #[inline]
+    pub(super) fn read_stacked<H: Host>(
+        &mut self,
+        host: &mut H,
+        r: Reference,
+    ) -> VmResult<Value, H::Error> {
+        if let Some(v) = self.stacked_global(r.symbol, r.index) {
+            match *v {
+                Value::Int(n) => return Ok(Value::Int(n)),
+                Value::Float(n) => return Ok(Value::Float(n)),
+                Value::Instance(n) => return Ok(Value::Instance(n)),
+                Value::Function(n) => return Ok(Value::Function(n)),
+                Value::Bytes(_) => {}
+            }
+        }
+        self.read_reference(host, r)
     }
     pub fn read_reference<H: Host>(
         &mut self,
@@ -538,6 +696,32 @@ impl<'s> Vm<'s> {
         let rr = checked(0, v.bytes_len(), self.free_strings(), LimitKind::Strings);
         self.note(rr)?;
         Ok(v)
+    }
+    /// [`Self::write_reference`] for a reference from this VM's stack (see
+    /// [`Self::read_stacked`]). A scalar store to a writable scalar global
+    /// element changes no string accounting, so it is stored directly once the
+    /// accounting check of [`Self::set_global`] is known to pass.
+    #[inline]
+    pub(super) fn write_stacked<H: Host>(
+        &mut self,
+        host: &mut H,
+        r: Reference,
+        v: Value,
+    ) -> VmResult<(), H::Error> {
+        let within = self.state.bytes + self.temporary_bytes <= self.state.limits.string_bytes;
+        if within
+            && !matches!(v, Value::Bytes(_) | Value::Instance(Some(_)))
+            && let Ok(s) = self.script().get(r.symbol)
+            && !s.is_member()
+            && (!s.is_const() || self.policy.ignore_const)
+            && value_matches(&v, s.data_type())
+            && let Some(slot) = self.state.slots[s.index() as usize].values.get_mut(r.index)
+            && !matches!(slot, Value::Bytes(_))
+        {
+            *slot = v;
+            return Ok(());
+        }
+        self.write_reference(host, r, v)
     }
     pub fn write_reference<H: Host>(
         &mut self,
@@ -805,7 +989,7 @@ impl<'s> Vm<'s> {
         Ok(Binding {
             symbol,
             key,
-            parameters: owned,
+            parameters: owned.into(),
             result: self.result_type(s)?,
             raw,
             address: s.address().ok_or_else(|| fault(FaultKind::CodeBoundary))? as u32,

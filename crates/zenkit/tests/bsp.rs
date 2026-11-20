@@ -319,3 +319,18 @@ fn bsp_unknown_chunks_and_surplus_header_payload_are_rejected() {
         );
     }
 }
+
+#[test]
+fn only_leaf_polygon_ranges_must_lie_in_the_index_list() {
+    let game = GameVersion::Gothic2;
+    let bytes = fixture(game);
+    let root = tree_body(&bytes) + 8;
+    let root_count = root + 24 + 4;
+    let mut raw = bytes.clone();
+    raw[root_count..root_count + 4].copy_from_slice(&99u32.to_le_bytes());
+    assert!(BspTree::from_bytes(&raw, game, BspLimits::default()).is_ok());
+    let leaf_count = root + 32 + 1 + 16 + 24 + 4;
+    let mut raw = bytes.clone();
+    raw[leaf_count..leaf_count + 4].copy_from_slice(&99u32.to_le_bytes());
+    assert!(BspTree::from_bytes(&raw, game, BspLimits::default()).is_err());
+}

@@ -409,8 +409,12 @@ impl BspTree {
             .checked_add(self.chunk_order.len())
             .filter(|&n| n <= b.limits.chunks)
             .ok_or_else(|| bad(ErrorKind::LimitExceeded))?;
+        // Only a leaf's polygon range is read; a branch's may point past the index list
+        // (the indoor worlds of the first game store such ranges).
         for n in &self.nodes {
-            self.polygon_range(n)?;
+            if n.is_leaf() {
+                self.polygon_range(n)?;
+            }
             if let BspNodeKind::Branch {
                 front,
                 back,

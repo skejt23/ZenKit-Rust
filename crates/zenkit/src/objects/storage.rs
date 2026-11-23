@@ -358,6 +358,7 @@ mod tests {
                     class: b"zCSkyControler_Outdoor",
                     game: GameVersion::Gothic2,
                     version: 52417,
+                    layout: 0,
                 },
             );
             let result = arena::with_allocation_failure(fail, || {

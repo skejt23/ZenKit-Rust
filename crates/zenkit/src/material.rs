@@ -498,6 +498,14 @@ impl Material {
         w.write(b"defaultMapping", V::Vec2(self.default_mapping))
     }
 }
+/// Class version whose field layout reads a material record of an unsupported
+/// version: G1 reads the G1 layout, G2 its complete current layout.
+pub(crate) const fn fallback_version(game: GameVersion) -> u16 {
+    match game {
+        GameVersion::Gothic1 => 0x4400,
+        GameVersion::Gothic2 => 0x9c03,
+    }
+}
 pub(crate) fn check_version(version: u16, game: GameVersion, p: usize) -> Result<()> {
     if !matches!(
         (version, game),

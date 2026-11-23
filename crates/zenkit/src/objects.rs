@@ -246,6 +246,7 @@ pub struct Graph {
     payloads: Pools,
     roots: Vec<Link>,
     versions: HashMap<usize, RetainedVersion>,
+    lossy: bool,
 }
 #[derive(Default)]
 struct Usage {
@@ -257,6 +258,9 @@ struct RetainedVersion {
     class: &'static [u8],
     game: GameVersion,
     version: u16,
+    /// Class version of the field layout the payload was read with; the record
+    /// keeps `version` only while the payload still reports this layout.
+    layout: u16,
 }
 // Narrow identifiers observed in complete saved-world records. Payload parsing
 // still uses the exact class/game schema and requires its complete object end.
@@ -278,6 +282,55 @@ fn canonical_alias(class: &[u8], version: u16, game: GameVersion) -> Option<u16>
         (b"zCVobScreenFX:zCVob", 12289, GameVersion::Gothic2) => Some(52224),
         _ => None,
     }
+}
+/// The class version whose field layout reads a record of a known class whose
+/// own version is unsupported. The layout depends only on the game: it is the
+/// version the game's records are written with by default. `None` for classes
+/// without a schema. Visual classes accept every version and never need one.
+fn fallback_layout(class: &[u8], game: GameVersion) -> Option<u16> {
+    if let Some(schema) = vob::storage::Schema::from_class(class) {
+        return Some(match schema {
+            vob::storage::Schema::CameraFrame => vob::CameraFrame::default_version(game),
+            _ => schema.version_identifier(game, 0),
+        });
+    }
+    match class {
+        material::CLASS => Some(material::fallback_version(game)),
+        b"oCWorld:zCWorld" => Some(64513),
+        b"zCDecal"
+        | MESSAGE
+        | ATOMIC
+        | BLOCK
+        | LIBRARY
+        | b"zCCSProps"
+        | b"zCCutscene:zCCSBlock"
+        | b"zCCSCutsceneContext:zCCutscene:zCCSBlock"
+        | b"oCCSPlayer:zCCSPlayer"
+        | b"zCCSPoolItem"
+        | b"oCCSManager:zCCSManager"
+        | b"oCNpcTalent"
+        | b"zCWayNet"
+        | b"zCWaypoint"
+        | b"zCSkyControler_Outdoor"
+        | b"oCSavegameInfo"
+        | vob::EVENT_MANAGER
+        | vob::AI_MOVE
+        | vob::AI_HUMAN => Some(0),
+        _ => None,
+    }
+}
+/// Whether this reader has a schema for the record class.
+fn known_class(class: &[u8], game: GameVersion) -> bool {
+    fallback_layout(class, game).is_some()
+        || matches!(
+            class,
+            b"zCMesh"
+                | b"zCProgMeshProto"
+                | b"zCParticleFX"
+                | b"zCAICamera"
+                | b"zCModel"
+                | b"zCMorphMesh"
+        )
 }
 fn default_version(node: ObjectRef<'_>) -> u16 {
     match node {
@@ -308,10 +361,20 @@ impl Graph {
             payloads: Pools::default(),
             roots: Vec::new(),
             versions: HashMap::new(),
+            lossy: false,
         })
     }
     pub fn len(&self) -> usize {
         self.nodes.len()
+    }
+    /// Whether a lenient parse left data of its input out of this graph; see
+    /// [`ObjectArchive::parse`]. Edits do not change it.
+    pub fn is_lossy(&self) -> bool {
+        self.lossy
+    }
+    /// Accept the lossy content as complete, silencing the write-back warning.
+    pub fn clear_lossy(&mut self) {
+        self.lossy = false;
     }
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty()
@@ -377,6 +440,17 @@ impl Graph {
         self.clear_stale_version(id)?;
         Ok(old)
     }
+    /// Drop the objects registered after the first `len`, newest first.
+    fn truncate(&mut self, len: usize) {
+        while self.nodes.len() > len {
+            let slot = self.nodes.len() - 1;
+            let location = self.nodes.swap_remove(slot);
+            if let (_, Some((owner, moved))) = self.payloads.remove(location) {
+                *self.nodes.get_mut(owner) = moved;
+            }
+            self.versions.remove(&slot);
+        }
+    }
     fn clear_stale_version(&mut self, id: ObjectId) -> Result<()> {
         let slot = self.slot(id)?;
         if let Some(version) = self.versions.get(&slot) {
@@ -389,8 +463,7 @@ impl Graph {
             };
             if node.class() != version.class
                 || game.is_some_and(|g| g != version.game)
-                || canonical_alias(version.class, version.version, version.game)
-                    != Some(default_version(node))
+                || version.layout != default_version(node)
             {
                 self.versions.remove(&slot);
             }
@@ -435,10 +508,7 @@ impl Graph {
             return Err(bad(ErrorKind::InvalidData, "object version game mismatch"));
         }
         if let Some(v) = self.versions.get(&id.slot) {
-            if v.class != node.class()
-                || v.game != game
-                || canonical_alias(v.class, v.version, game) != Some(default_version(node))
-            {
+            if v.class != node.class() || v.game != game || v.layout != default_version(node) {
                 return Err(bad(ErrorKind::InvalidData, "stale retained object version"));
             }
             return Ok(v.version);
@@ -529,7 +599,21 @@ impl Graph {
                 if index < visual {
                     (&[Kind::Visual], false)
                 } else if index < visual + usize::from(v.base.ai.is_some()) {
-                    (&[Kind::AiMove, Kind::AiHuman], false)
+                    // The AI record is a movement or human controller, or a camera AI
+                    // (`zCAICamera`), which shares its record with the camera visual.
+                    if let Some(id) = link.target {
+                        let valid = match self.get(id)? {
+                            ObjectRef::AiMove(_) | ObjectRef::AiHuman(_) => true,
+                            ObjectRef::Visual(Visual { kind, .. }) => {
+                                matches!(kind, VisualKind::Camera)
+                            }
+                            _ => false,
+                        };
+                        if !valid {
+                            return Err(bad(ErrorKind::WrongObjectType, "object graph edge kind"));
+                        }
+                    }
+                    return Ok(());
                 } else if index < v.base_child_count() {
                     (&[Kind::EventManager], false)
                 } else if let Some(n) = v.kind.npc() {
@@ -901,7 +985,106 @@ pub struct ObjectArchive {
     pub game: GameVersion,
     pub graph: Graph,
 }
+/// How a reader treats object records it has no exact schema for.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Tolerance {
+    /// Unknown classes and unsupported class versions fail the parse.
+    #[default]
+    Strict,
+    /// Unknown nested records are skipped and unsupported class versions are
+    /// read with a fallback layout; see [`ObjectArchive::parse`].
+    Lenient,
+}
+/// Options of [`ObjectArchive::parse`].
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ParseOptions {
+    pub limits: Limits,
+    pub tolerance: Tolerance,
+}
+impl ParseOptions {
+    pub fn new(limits: Limits) -> Self {
+        Self {
+            limits,
+            tolerance: Tolerance::Strict,
+        }
+    }
+    pub fn tolerance(self, tolerance: Tolerance) -> Self {
+        Self { tolerance, ..self }
+    }
+}
+impl From<Limits> for ParseOptions {
+    fn from(limits: Limits) -> Self {
+        Self::new(limits)
+    }
+}
+/// A parsed value with what the reader tolerated to produce it.
+#[derive(Debug)]
+pub struct Parsed<T> {
+    pub value: T,
+    /// Tolerated records, in archive order. Always empty for a strict parse.
+    pub diagnostics: Vec<Diagnostic>,
+}
+impl<T> Parsed<T> {
+    /// Whether the value lacks data of the input: a record was skipped, a
+    /// reference became null, or a record's trailing fields were dropped.
+    /// Writing a lossy value back does not reproduce the input.
+    pub fn is_lossy(&self) -> bool {
+        lossy(&self.diagnostics)
+    }
+}
+fn lossy(diagnostics: &[Diagnostic]) -> bool {
+    diagnostics.iter().any(|d| {
+        !matches!(
+            d.kind,
+            DiagnosticKind::ReadWithLayout { complete: true, .. }
+        )
+    })
+}
+/// One object record that a lenient parse tolerated.
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Diagnostic {
+    /// Archive offset of the record.
+    pub offset: usize,
+    /// Object index of the record; for a null reference, the index it names.
+    pub index: u32,
+    /// Class name of the record; empty for a null reference.
+    pub class: Vec<u8>,
+    /// Class version stored in the record; 0 for a null reference.
+    pub version: u16,
+    pub kind: DiagnosticKind,
+}
+/// What a lenient parse did with a record.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DiagnosticKind {
+    /// Left out whole with everything nested in it; its link reads as null.
+    Skipped(SkipReason),
+    /// Read with the field layout of the supported class version `layout`.
+    /// `complete` is false when fields remained at the record's end and were
+    /// dropped.
+    ReadWithLayout { layout: u16, complete: bool },
+    /// A reference to an object inside a skipped record; it reads as null.
+    NullReference,
+}
+/// Why a lenient parse skipped a record.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SkipReason {
+    /// The class has no schema in this reader.
+    UnknownClass,
+    /// The class is known, but its record cannot be read for this game.
+    UnsupportedVersion,
+    /// The class version is unsupported and the fields did not parse with the
+    /// fallback layout.
+    LayoutMismatch,
+}
 impl ObjectArchive {
+    /// Parse strictly: unknown classes, unsupported class versions and extra
+    /// fields fail. A VOB's AI slot also accepts a camera AI (`zCAICamera`), and
+    /// G1 camera frames also read class version 34560.
     pub fn from_bytes(bytes: &[u8], game: GameVersion, limits: Limits) -> Result<Self> {
         let (metadata, mut parser) = Parser::new(bytes, game, limits)?;
         while parser.read_root()? {}
@@ -910,6 +1093,66 @@ impl ObjectArchive {
             game,
             graph: parser.finish()?,
         })
+    }
+    /// Parse with explicit options. A strict parse equals [`Self::from_bytes`]
+    /// and returns no diagnostics.
+    ///
+    /// A lenient parse tolerates records this reader has no exact schema for and
+    /// returns one [`Diagnostic`] per tolerated record:
+    ///
+    /// - A record of a known class with an unsupported class version is read
+    ///   with the field layout the game uses for the class by default, whatever
+    ///   the record's own version. In ASCII and BIN_SAFE, fields left at the
+    ///   record's end are dropped. BINARY fields carry no names or types, so a
+    ///   BINARY record must end exactly where the layout ends.
+    ///   If its own fields or direct child records do not parse with that layout
+    ///   (invalid data, a wrong object type, an unsupported value, or in BINARY
+    ///   a read past the record's end), everything read for it is rolled back
+    ///   and a nested record is skipped whole; a root record fails. Errors raised
+    ///   inside a nested record, limit errors and IO errors always fail.
+    /// - A nested record of an unknown class is skipped whole. An unknown root
+    ///   record fails.
+    /// - A reference to an object defined inside a skipped record reads as null.
+    ///   Any other unresolved reference fails as in a strict parse.
+    ///
+    /// A skipped record's link reads as null. In a world's VOB tree a skipped
+    /// VOB stays a tree entry with a null object, its children still attached
+    /// beneath it; a skipped waypoint becomes a null point of the waynet and of
+    /// its ways. Where the parent requires its
+    /// child (a cutscene block or library entry), that null fails the parent like
+    /// any invalid record, so the parse fails unless the parent itself lies
+    /// inside a record read with a fallback layout, which is then rolled back.
+    /// Malformed data and failures inside supported records still fail.
+    ///
+    /// Writing a lenient result back omits skipped records and writes null
+    /// references as null. [`Parsed::is_lossy`] and [`Graph::is_lossy`] report
+    /// such results, and [`Self::to_bytes`] warns when writing one. A record
+    /// read completely with a fallback layout keeps its original class version,
+    /// so a strict reader rejects the output as it rejected the input; a record
+    /// whose trailing fields were dropped is written with the fallback layout's
+    /// version, which matches the fields written.
+    ///
+    /// Each tolerated record is logged at debug level, and a lenient parse that
+    /// tolerated any logs one warning summary.
+    pub fn parse(bytes: &[u8], game: GameVersion, options: ParseOptions) -> Result<Parsed<Self>> {
+        let (metadata, mut parser) = Parser::new(bytes, game, options.limits)?;
+        if options.tolerance == Tolerance::Lenient {
+            parser.lenient = Some(Box::default());
+        }
+        while parser.read_root()? {}
+        let diagnostics = parser
+            .lenient
+            .as_mut()
+            .map(|l| std::mem::take(&mut l.diagnostics))
+            .unwrap_or_default();
+        let mut value = Self {
+            metadata,
+            game,
+            graph: parser.finish()?,
+        };
+        log_summary(&diagnostics);
+        value.graph.lossy = lossy(&diagnostics);
+        Ok(Parsed { value, diagnostics })
     }
     /// Validate metadata/graph owned-byte budgets and whole-graph semantics.
     /// Encoding representability, metadata version/format rules, traversal depth
@@ -921,8 +1164,18 @@ impl ObjectArchive {
     /// mutated. Unknown classes/extra fields are rejected on read, not discarded.
     /// Iterative traversal has a hard framing depth ceiling of 128 even if
     /// configured archive depth is larger. Reference occurrences count as depth.
+    ///
+    /// A lossy graph ([`Graph::is_lossy`]) is written as it is, with a warning:
+    /// the output lacks what the lenient parse left out.
     pub fn to_bytes(&self, limits: Limits) -> Result<Vec<u8>> {
         self.validate(limits)?;
+        if self.graph.lossy {
+            crate::logging::emit(
+                crate::logging::Level::Warn,
+                "zenkit::objects",
+                format_args!("writing a lossy object graph; skipped records are left out"),
+            );
+        }
         let output = archive::Writer::new(self.metadata.as_header(), limits.archive)?;
         let mut writer = Encoder {
             output,
@@ -1047,6 +1300,76 @@ enum DefinitionState {
     Complete,
 }
 
+/// Bookkeeping of a lenient parse.
+#[derive(Default)]
+struct Lenient {
+    diagnostics: Vec<Diagnostic>,
+    /// Class and version of each skipped record.
+    records: Vec<(Vec<u8>, u16)>,
+    /// Object indices defined inside skipped or rolled-back records, with the
+    /// skipped record (in `records`) that contained them.
+    skipped: HashMap<u32, usize>,
+    /// Skipped BINARY records, whose nested records are opaque: the record's own
+    /// index, the next index defined after it (`None` until one is) and the
+    /// skipped record. Writers number definitions in order, so the indices in
+    /// between were nested.
+    ranges: Vec<(u32, Option<u32>, usize)>,
+    /// Ranges at the end of `ranges` still waiting for their next definition.
+    open: usize,
+    /// Object index of each registered graph slot, for rollback.
+    indices: Vec<u32>,
+}
+impl Lenient {
+    /// The skipped record that contained the definition of `index`.
+    fn owner(&self, index: u32) -> Option<usize> {
+        self.skipped.get(&index).copied().or_else(|| {
+            self.ranges
+                .iter()
+                .find(|&&(start, end, _)| {
+                    index == start || (index > start && end.is_none_or(|e| index < e))
+                })
+                .map(|r| r.2)
+        })
+    }
+    /// Record the definition of `index` in the next graph slot.
+    fn defined(&mut self, index: u32) {
+        let len = self.ranges.len();
+        for range in &mut self.ranges[len - self.open..] {
+            range.1 = Some(index);
+        }
+        self.open = 0;
+        self.indices.push(index);
+    }
+}
+fn tolerance_table(p: usize) -> Error {
+    at(ErrorKind::LimitExceeded, p, "tolerated record table")
+}
+fn log_summary(diagnostics: &[Diagnostic]) {
+    if diagnostics.is_empty() || !crate::logging::enabled(crate::logging::Level::Warn) {
+        return;
+    }
+    let (mut skipped, mut layout, mut incomplete, mut null) = (0, 0, 0, 0);
+    for d in diagnostics {
+        match d.kind {
+            DiagnosticKind::Skipped(_) => skipped += 1,
+            DiagnosticKind::ReadWithLayout { complete, .. } => {
+                layout += 1;
+                incomplete += usize::from(!complete);
+            }
+            DiagnosticKind::NullReference => null += 1,
+        }
+    }
+    crate::logging::emit(
+        crate::logging::Level::Warn,
+        "zenkit::objects",
+        format_args!(
+            "lenient object archive parse tolerated {} record(s): {skipped} skipped, \
+             {layout} read with a fallback layout ({incomplete} not fully loaded), \
+             {null} null reference(s)",
+            diagnostics.len()
+        ),
+    );
+}
 pub(crate) struct Parser<'a> {
     pub(crate) reader: archive::Reader<'a>,
     graph: Graph,
@@ -1060,6 +1383,15 @@ pub(crate) struct Parser<'a> {
     geometry: mesh::Budget<'a>,
     world_sections: usize,
     game: GameVersion,
+    /// State of a lenient parse; `None` when strict.
+    lenient: Option<Box<Lenient>>,
+    /// The last record was skipped or read through a nested traversal, and its
+    /// end already consumed.
+    record_closed: bool,
+    /// Read the next record with this class version instead of its own.
+    layout: Option<u16>,
+    /// Nesting level of the record enclosing the current traversal.
+    base_level: usize,
 }
 impl<'a> Parser<'a> {
     pub(crate) fn new(
@@ -1118,6 +1450,10 @@ impl<'a> Parser<'a> {
             geometry: mesh::Budget::with_space(limits.world.geometry, space),
             world_sections: 0,
             game,
+            lenient: None,
+            record_closed: false,
+            layout: None,
+            base_level: 0,
         };
         Ok((metadata, parser))
     }
@@ -1192,7 +1528,17 @@ impl<'a> Parser<'a> {
             _ => unreachable!(),
         }
     }
-    fn open(&mut self, mut h: archive::ObjectHeader<'a>, mut p: usize) -> Result<Link> {
+    fn open(&mut self, h: archive::ObjectHeader<'a>, p: usize) -> Result<Link> {
+        self.traverse(h, p, None)
+    }
+    /// Read the record `h` and its children. With `lenient`, the index of its
+    /// tolerated-record entry, fields left at the end of `h` itself are skipped.
+    fn traverse(
+        &mut self,
+        mut h: archive::ObjectHeader<'a>,
+        mut p: usize,
+        lenient: Option<usize>,
+    ) -> Result<Link> {
         struct Parent {
             link: Link,
             remaining: usize,
@@ -1202,7 +1548,8 @@ impl<'a> Parser<'a> {
         }
         let mut parents: Vec<Parent> = Vec::new();
         'record: loop {
-            let (mut link, mut children, definition) = self.record(h, p, parents.len() + 1)?;
+            let (mut link, mut children, definition) =
+                self.record(h, p, self.base_level + parents.len() + 1)?;
             let mut phase = if definition {
                 DefinitionPhase::new(self.graph.get(link.target.expect("definition"))?)
             } else {
@@ -1213,7 +1560,7 @@ impl<'a> Parser<'a> {
             }
             if children != 0 {
                 p = self.reader.position();
-                depth(parents.len() + 2, self.limits, Some(p))?;
+                depth(self.base_level + parents.len() + 2, self.limits, Some(p))?;
                 reserve(&mut parents, 1)
                     .map_err(|_| at(ErrorKind::LimitExceeded, p, "object traversal frames"))?;
                 parents.push(Parent {
@@ -1229,7 +1576,9 @@ impl<'a> Parser<'a> {
                     .ok_or_else(|| at(ErrorKind::InvalidData, p, "expected object record"))?;
                 continue;
             }
-            self.end()?;
+            if !std::mem::take(&mut self.record_closed) {
+                self.end_record(lenient.filter(|_| parents.is_empty()))?;
+            }
             if definition {
                 self.complete_definition(link.target.expect("definition"))?;
             }
@@ -1367,7 +1716,7 @@ impl<'a> Parser<'a> {
                 if parent.remaining != 0 {
                     p = self.reader.position();
                     parent.edge_pos = p;
-                    depth(parents.len() + 1, self.limits, Some(p))?;
+                    depth(self.base_level + parents.len() + 1, self.limits, Some(p))?;
                     h = self
                         .reader
                         .begin_object()?
@@ -1375,7 +1724,7 @@ impl<'a> Parser<'a> {
                     continue 'record;
                 }
                 let parent = parents.pop().expect("current parent");
-                self.end()?;
+                self.end_record(lenient.filter(|_| parents.is_empty()))?;
                 self.complete_definition(id)?;
                 link = parent.link;
             }
@@ -1462,6 +1811,53 @@ impl<'a> Parser<'a> {
         }
         Ok(remaining)
     }
+    /// Close the current record. With `lenient`, the index of its diagnostic,
+    /// remaining fields are skipped and the diagnostic marked incomplete.
+    fn end_record(&mut self, lenient: Option<usize>) -> Result<()> {
+        let Some(index) = lenient else {
+            return self.end();
+        };
+        if self.reader.end_object()? {
+            return Ok(());
+        }
+        let p = self.reader.position();
+        if self.reader.header().format == archive::Format::Binary {
+            // BINARY fields carry no names or types, so a layout that leaves bytes
+            // over has misread the record rather than missed a few fields.
+            return Err(at(
+                ErrorKind::Unsupported,
+                p,
+                "BINARY record length does not match the fallback layout",
+            ));
+        }
+        self.reader.skip_current_object(archive::SkipLimits {
+            bytes: self.limits.archive.bytes,
+            ..archive::SkipLimits::default()
+        })?;
+        if let Some(d) = self
+            .lenient
+            .as_mut()
+            .and_then(|l| l.diagnostics.get_mut(index))
+        {
+            if let DiagnosticKind::ReadWithLayout { complete, .. } = &mut d.kind {
+                *complete = false;
+            }
+            if crate::logging::enabled(crate::logging::Level::Debug) {
+                crate::logging::emit(
+                    crate::logging::Level::Debug,
+                    "zenkit::objects",
+                    format_args!(
+                        "object record {:?} version {} at offset {} not fully loaded; \
+                     dropped its fields from offset {p}",
+                        String::from_utf8_lossy(&d.class),
+                        d.version,
+                        d.offset,
+                    ),
+                );
+            }
+        }
+        Ok(())
+    }
     fn end(&mut self) -> Result<()> {
         if !self.reader.end_object()? {
             return Err(at(
@@ -1472,14 +1868,278 @@ impl<'a> Parser<'a> {
         }
         Ok(())
     }
+    /// Reject record classes and class versions this reader has no schema for.
+    fn check_record(
+        h: &archive::ObjectHeader<'_>,
+        parsed_version: u16,
+        game: GameVersion,
+        p: usize,
+    ) -> Result<()> {
+        let extra = vob::check_object(h.class_name, parsed_version, game, p)?;
+        if h.class_name == material::CLASS {
+            material::check_version(h.version, game, p)?;
+        } else if h.class_name == b"oCWorld:zCWorld" {
+            if h.version != 64513 {
+                return Err(at(ErrorKind::Unsupported, p, "world version"));
+            }
+        } else if !extra && parsed_version != 0 {
+            return Err(at(ErrorKind::Unsupported, p, "object record version"));
+        }
+        Ok(())
+    }
+    /// Skip the unsupported nested definition `h` whole in a lenient parse,
+    /// yielding a null link; otherwise return `error`. Called only before any of
+    /// the record's fields were read.
+    fn skip_record(
+        &mut self,
+        h: &archive::ObjectHeader<'_>,
+        p: usize,
+        level: usize,
+        error: Error,
+    ) -> Result<(Link, usize, bool)> {
+        if self.lenient.is_none()
+            || error.kind != ErrorKind::Unsupported
+            || level < 2
+            || h.is_empty()
+            || h.is_reference()
+        {
+            return Err(error);
+        }
+        let reason = if known_class(h.class_name, self.game) {
+            SkipReason::UnsupportedVersion
+        } else {
+            SkipReason::UnknownClass
+        };
+        self.skip_whole(h, p, reason, Vec::new())
+    }
+    /// Skip the rest of the open record `h`, remembering the object indices
+    /// defined inside it, including the rolled-back definitions `undone`.
+    fn skip_whole(
+        &mut self,
+        h: &archive::ObjectHeader<'_>,
+        p: usize,
+        reason: SkipReason,
+        mut undone: Vec<u32>,
+    ) -> Result<(Link, usize, bool)> {
+        let name = copy(h.object_name, &mut self.copied, self.limits.copied_bytes, p)?;
+        let class = copy(h.class_name, &mut self.copied, self.limits.copied_bytes, p)?;
+        reserve(&mut undone, 1).map_err(|_| tolerance_table(p))?;
+        undone.push(h.index);
+        self.reader.skip_current_object_visiting(
+            archive::SkipLimits {
+                bytes: self.limits.archive.bytes,
+                ..archive::SkipLimits::default()
+            },
+            &mut |n| {
+                if !n.is_empty() && !n.is_reference() {
+                    reserve(&mut undone, 1).map_err(|_| tolerance_table(p))?;
+                    undone.push(n.index);
+                }
+                Ok(())
+            },
+        )?;
+        self.record_closed = true;
+        let binary = self.reader.header().format == archive::Format::Binary;
+        let lenient = self.lenient.as_mut().expect("lenient parse");
+        let record = lenient.records.len();
+        reserve(&mut lenient.records, 1).map_err(|_| tolerance_table(p))?;
+        lenient
+            .skipped
+            .try_reserve(undone.len())
+            .map_err(|_| tolerance_table(p))?;
+        if binary {
+            reserve(&mut lenient.ranges, 1).map_err(|_| tolerance_table(p))?;
+            lenient.ranges.push((h.index, None, record));
+            lenient.open += 1;
+        }
+        lenient
+            .skipped
+            .extend(undone.into_iter().map(|i| (i, record)));
+        let diagnostic_class = copy(&class, &mut self.copied, self.limits.copied_bytes, p)?;
+        lenient.records.push((class, h.version));
+        self.note(Diagnostic {
+            offset: p,
+            index: h.index,
+            class: diagnostic_class,
+            version: h.version,
+            kind: DiagnosticKind::Skipped(reason),
+        })?;
+        Ok((Link::new(name, None), 0, false))
+    }
+    fn note(&mut self, d: Diagnostic) -> Result<()> {
+        if crate::logging::enabled(crate::logging::Level::Debug) {
+            let class = String::from_utf8_lossy(&d.class);
+            let (version, offset, index) = (d.version, d.offset, d.index);
+            let message = match d.kind {
+                DiagnosticKind::Skipped(reason) => format!(
+                    "skipped object record {class:?} version {version} index {index} \
+                     at offset {offset}: {reason:?}"
+                ),
+                DiagnosticKind::ReadWithLayout { layout, .. } => format!(
+                    "object record {class:?} index {index} at offset {offset} has \
+                     unsupported version {version}; reading it with the layout of \
+                     version {layout}"
+                ),
+                DiagnosticKind::NullReference => format!(
+                    "reference at offset {offset} names object {index} inside skipped \
+                     record {class:?}; reading it as null"
+                ),
+            };
+            crate::logging::emit(
+                crate::logging::Level::Debug,
+                "zenkit::objects",
+                format_args!("{message}"),
+            );
+        }
+        let offset = d.offset;
+        let list = &mut self.lenient.as_mut().expect("lenient parse").diagnostics;
+        reserve(list, 1).map_err(|_| tolerance_table(offset))?;
+        list.push(d);
+        Ok(())
+    }
+    /// The fallback layout that reads `h` in a lenient parse, for a known class
+    /// whose record version is unsupported.
+    fn unlisted_layout(&self, h: &archive::ObjectHeader<'_>) -> Option<u16> {
+        if self.lenient.is_none() || h.is_empty() || h.is_reference() {
+            return None;
+        }
+        let parsed = canonical_alias(h.class_name, h.version, self.game).unwrap_or(h.version);
+        match Self::check_record(h, parsed, self.game, 0) {
+            Err(e) if e.kind == ErrorKind::Unsupported => fallback_layout(h.class_name, self.game),
+            _ => None,
+        }
+    }
+    /// Read the record `h` of a known class with the layout of `layout` through a
+    /// nested traversal. If its fields do not parse with that layout, everything
+    /// it registered and consumed is rolled back and a nested record is skipped
+    /// whole; a root record fails. Limit, EOF and IO errors always propagate.
+    fn read_unlisted(
+        &mut self,
+        h: archive::ObjectHeader<'a>,
+        p: usize,
+        level: usize,
+        layout: u16,
+    ) -> Result<(Link, usize, bool)> {
+        let reader = self.reader.checkpoint();
+        let frame = self.reader.depth();
+        let nodes = self.graph.len();
+        let (copied, links, sequences, deferred, geometry, sections) = (
+            self.copied,
+            self.links,
+            self.sequences,
+            self.deferred_keys.len(),
+            self.geometry,
+            self.world_sections,
+        );
+        let entry = self
+            .lenient
+            .as_ref()
+            .expect("lenient parse")
+            .diagnostics
+            .len();
+        let class = copy(h.class_name, &mut self.copied, self.limits.copied_bytes, p)?;
+        self.note(Diagnostic {
+            offset: p,
+            index: h.index,
+            class,
+            version: h.version,
+            kind: DiagnosticKind::ReadWithLayout {
+                layout,
+                complete: true,
+            },
+        })?;
+        self.layout = Some(layout);
+        let base = std::mem::replace(&mut self.base_level, level - 1);
+        let result = self.traverse(h, p, Some(entry));
+        self.base_level = base;
+        self.layout = None;
+        let error = match result {
+            Ok(link) => {
+                let lenient = self.lenient.as_ref().expect("lenient parse");
+                let complete = matches!(
+                    lenient.diagnostics[entry].kind,
+                    DiagnosticKind::ReadWithLayout { complete: true, .. }
+                );
+                // Fields were dropped: write the record with the layout's version.
+                if !complete && let Some(id) = link.target {
+                    self.graph.versions.remove(&id.slot);
+                }
+                self.record_closed = true;
+                return Ok((link, 0, false));
+            }
+            // Only a mismatch of this record's own fields or direct child
+            // records rolls it back. Errors raised inside a nested record, which
+            // keep its frame open, belong to that record and propagate.
+            Err(error)
+                if level >= 2 && self.reader.depth() <= frame && {
+                    let binary = self.reader.header().format == archive::Format::Binary;
+                    matches!(
+                        error.kind,
+                        ErrorKind::InvalidData
+                            | ErrorKind::WrongObjectType
+                            | ErrorKind::Unsupported
+                    ) || (binary && error.kind == ErrorKind::UnexpectedEof)
+                } =>
+            {
+                error
+            }
+            Err(error) => return Err(error),
+        };
+        // A failing rollback or skip reports why the record was rolled back.
+        if self.reader.restore(reader).is_err() {
+            return Err(error);
+        }
+        self.graph.truncate(nodes);
+        self.definitions.truncate(nodes);
+        let lenient = self.lenient.as_mut().expect("lenient parse");
+        let mut undone = Vec::new();
+        if reserve(&mut undone, lenient.indices.len() - nodes).is_err() {
+            return Err(error);
+        }
+        for index in lenient.indices.drain(nodes..) {
+            self.ids.remove(&index);
+            undone.push(index);
+        }
+        lenient.diagnostics.truncate(entry);
+        (self.copied, self.links, self.sequences) = (copied, links, sequences);
+        self.deferred_keys.truncate(deferred);
+        (self.geometry, self.world_sections) = (geometry, sections);
+        if crate::logging::enabled(crate::logging::Level::Debug) {
+            crate::logging::emit(
+                crate::logging::Level::Debug,
+                "zenkit::objects",
+                format_args!(
+                    "object record {:?} version {} at offset {p} did not parse with the \
+                     layout of version {layout}: {error}",
+                    String::from_utf8_lossy(h.class_name),
+                    h.version,
+                ),
+            );
+        }
+        link_count(&mut self.links, 1, self.limits.links)
+            .and_then(|_| self.skip_whole(&h, p, SkipReason::LayoutMismatch, undone))
+            .map_err(|_| error)
+    }
     /// Register definitions and read their fields preceding a possible child.
     /// Returning a positive count leaves children and the enclosing end pending.
     fn record(
         &mut self,
-        h: archive::ObjectHeader<'_>,
+        mut h: archive::ObjectHeader<'a>,
         p: usize,
         level: usize,
     ) -> Result<(Link, usize, bool)> {
+        // The class version the record was stored with, when it is read with
+        // the layout of another version.
+        let original = self
+            .layout
+            .take()
+            .map(|layout| std::mem::replace(&mut h.version, layout));
+        if original.is_none()
+            && let Some(layout) = self.unlisted_layout(&h)
+        {
+            depth(level, self.limits, Some(p))?;
+            return self.read_unlisted(h, p, level, layout);
+        }
         depth(level, self.limits, Some(p))?;
         link_count(&mut self.links, 1, self.limits.links).map_err(|e| at(e.kind, p, e.context))?;
         if !h.is_empty() && !h.is_reference() {
@@ -1492,28 +2152,39 @@ impl<'a> Parser<'a> {
         }
         let alias = canonical_alias(h.class_name, h.version, self.game);
         let parsed_version = alias.unwrap_or(h.version);
-        let extra = vob::check_object(h.class_name, parsed_version, self.game, p)?;
-        if h.class_name == material::CLASS {
-            material::check_version(h.version, self.game, p)?;
-        } else if h.class_name == b"oCWorld:zCWorld" {
-            if h.version != 64513 {
-                return Err(at(ErrorKind::Unsupported, p, "world version"));
-            }
-        } else if !extra && parsed_version != 0 {
-            return Err(at(ErrorKind::Unsupported, p, "object record version"));
+        if let Err(e) = Self::check_record(&h, parsed_version, self.game, p) {
+            return self.skip_record(&h, p, level, e);
         }
         let name = copy(h.object_name, &mut self.copied, self.limits.copied_bytes, p)?;
         let mut children = 0;
         let target = if h.is_empty() {
             None
         } else if h.is_reference() {
-            Some(*self.ids.get(&h.index).ok_or_else(|| {
-                at(
-                    ErrorKind::UnresolvedReference,
-                    p,
-                    "unresolved or forward object reference",
-                )
-            })?)
+            match self.ids.get(&h.index) {
+                Some(id) => Some(*id),
+                // An object defined inside a skipped record reads as null.
+                None if let Some(owner) = self.lenient.as_ref().and_then(|l| l.owner(h.index)) => {
+                    let lenient = self.lenient.as_ref().expect("lenient parse");
+                    let (class, version) = &lenient.records[owner];
+                    let version = *version;
+                    let class = copy(class, &mut self.copied, self.limits.copied_bytes, p)?;
+                    self.note(Diagnostic {
+                        offset: p,
+                        index: h.index,
+                        class,
+                        version,
+                        kind: DiagnosticKind::NullReference,
+                    })?;
+                    None
+                }
+                None => {
+                    return Err(at(
+                        ErrorKind::UnresolvedReference,
+                        p,
+                        "unresolved or forward object reference",
+                    ));
+                }
+            }
         } else {
             if self.ids.contains_key(&h.index) {
                 return Err(at(ErrorKind::InvalidData, p, "duplicate object index"));
@@ -1525,8 +2196,12 @@ impl<'a> Parser<'a> {
                 .try_reserve(1)
                 .map_err(|_| at(ErrorKind::LimitExceeded, p, "object identity table"))?;
             reserve(&mut self.definitions, 1)?;
+            if let Some(l) = &mut self.lenient {
+                reserve(&mut l.indices, 1).map_err(|_| tolerance_table(p))?;
+            }
             let definition = if h.class_name == b"oCItem:zCVob"
                 && h.version == 0
+                && original.is_none()
                 && self.reader.header().save_game
                 && self.reader.header().format == archive::Format::Binary
             {
@@ -1540,7 +2215,8 @@ impl<'a> Parser<'a> {
             } else {
                 DefinitionState::Incomplete
             };
-            if alias.is_some() {
+            let retained = original.or(alias.map(|_| h.version));
+            if retained.is_some() {
                 self.graph
                     .versions
                     .try_reserve(1)
@@ -1558,29 +2234,33 @@ impl<'a> Parser<'a> {
             } else {
                 None
             };
-            let id = self
-                .graph
-                .register(
-                    h.class_name,
-                    parsed_version,
-                    self.game,
-                    self.reader.header().save_game,
-                    material,
-                )
-                .map_err(|e| at(e.kind, p, e.context))?;
+            let id = match self.graph.register(
+                h.class_name,
+                parsed_version,
+                self.game,
+                self.reader.header().save_game,
+                material,
+            ) {
+                Ok(id) => id,
+                Err(e) => return self.skip_record(&h, p, level, at(e.kind, p, e.context)),
+            };
             let class = self.graph.get(id)?.class();
             self.definitions.push(definition);
-            if alias.is_some() {
+            if let Some(version) = retained {
                 self.graph.versions.insert(
                     id.slot,
                     RetainedVersion {
                         class,
                         game: self.game,
-                        version: h.version,
+                        version,
+                        layout: parsed_version,
                     },
                 );
             }
             self.ids.insert(h.index, id); // reserve identity before fields, including cycles
+            if let Some(l) = &mut self.lenient {
+                l.defined(h.index);
+            }
             let kind = self.graph.get(id)?.kind();
             match kind {
                 Kind::World | Kind::WayNet | Kind::WayPoint | Kind::SkyController => {

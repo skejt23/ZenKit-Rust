@@ -26,6 +26,15 @@ pub struct Reader<'a> {
     space: AddressSpace<'a>,
     table_range: Option<std::ops::Range<usize>>,
 }
+/// A saved reader position; see [`Reader::checkpoint`].
+pub(crate) struct Checkpoint<'a> {
+    input: Bytes<'a>,
+    depth: usize,
+    /// End of the innermost open object, so a frame closed after the
+    /// checkpoint can be reopened.
+    top: Option<usize>,
+    records: usize,
+}
 impl std::fmt::Debug for Reader<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Reader")
@@ -356,6 +365,44 @@ impl<'a> Reader<'a> {
     }
     pub fn depth(&self) -> usize {
         self.ends.len()
+    }
+    /// Capture the cursor, open-object frames and record count, for [`Self::restore`].
+    pub(crate) fn checkpoint(&self) -> Checkpoint<'a> {
+        Checkpoint {
+            input: self.input.clone(),
+            depth: self.ends.len(),
+            top: self.ends.last().copied(),
+            records: self.records,
+        }
+    }
+    /// Return to a checkpoint of this reader. Objects opened since are dropped
+    /// from the stack. The innermost object open at the checkpoint may have been
+    /// closed since; it is reopened. A checkpoint whose enclosing objects were
+    /// closed since, or whose innermost frame was replaced, is rejected and the
+    /// reader is left unchanged.
+    pub(crate) fn restore(&mut self, checkpoint: Checkpoint<'a>) -> Result<()> {
+        let depth = checkpoint.depth;
+        let reopen = self.ends.len() + 1 == depth;
+        let intact = self.ends.len() >= depth
+            && (depth == 0 || self.ends.get(depth - 1).copied() == checkpoint.top);
+        if !reopen && !intact {
+            return Err(Error::new(
+                ErrorKind::InvalidData,
+                self.position(),
+                "archive checkpoint outside the open objects",
+            ));
+        }
+        if reopen {
+            let p = self.position();
+            reserve(&mut self.ends, 1, p)?;
+            self.ends
+                .push(checkpoint.top.expect("open object at checkpoint"));
+        } else {
+            self.ends.truncate(depth);
+        }
+        self.input = checkpoint.input;
+        self.records = checkpoint.records;
+        Ok(())
     }
     /// Take an unframed raw span as a bounded IO reader with absolute offsets.
     /// Success advances the archive by `length`; errors in the returned reader

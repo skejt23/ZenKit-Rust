@@ -77,7 +77,7 @@ impl fmt::Debug for Camera {
 /// encoding has no raw-field delimiter. Other extra object fields still fail.
 #[derive(Clone, PartialEq)]
 pub struct CameraFrame {
-    /// Retained class-version metadata. G1 supports 12289; G2 supports the
+    /// Retained class-version metadata. G1 supports 12289 and 34560; G2 supports the
     /// standalone corpus's 31489, saved-world 9218 and default output's 52224.
     pub version: u16,
     pub time: f32,
@@ -100,11 +100,7 @@ impl CameraFrame {
     /// values and the shared Mat4 default. No runtime playback defaults inferred.
     pub fn new(game: GameVersion) -> Self {
         Self {
-            version: if game == GameVersion::Gothic1 {
-                12289
-            } else {
-                52224
-            },
+            version: Self::default_version(game),
             time: 0.,
             roll_angle: 0.,
             fov_scale: 0.,
@@ -121,9 +117,17 @@ impl CameraFrame {
             pose_tail: Vec::new(),
         }
     }
+    /// Class version written by default for the game; every supported version
+    /// of a game shares its field layout.
+    pub(crate) const fn default_version(game: GameVersion) -> u16 {
+        match game {
+            GameVersion::Gothic1 => 12289,
+            GameVersion::Gothic2 => 52224,
+        }
+    }
     pub(crate) fn version_supported(version: u16, game: GameVersion) -> bool {
         match game {
-            GameVersion::Gothic1 => version == 12289,
+            GameVersion::Gothic1 => matches!(version, 12289 | 34560),
             GameVersion::Gothic2 => matches!(version, 9218 | 31489 | 52224),
         }
     }

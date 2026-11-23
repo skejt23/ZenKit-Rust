@@ -536,3 +536,515 @@ fn dense_iterators_reverse_and_debug_stay_small() {
     assert!(format!("{d:?}").len() < 500);
     assert!(format!("{:?}", d.graph.get(id).unwrap()).len() < 300);
 }
+
+// Lenient parsing. Fixtures are written with the graph API and then patched in
+// place: same-length text patches, or insertions with BINARY record lengths and
+// the BIN_SAFE table pointer adjusted.
+fn lenient(bytes: &[u8], game: GameVersion) -> zenkit::Result<Parsed<ObjectArchive>> {
+    let options = ParseOptions::new(Limits::default()).tolerance(Tolerance::Lenient);
+    ObjectArchive::parse(bytes, game, options)
+}
+fn find(bytes: &[u8], pattern: &[u8]) -> usize {
+    bytes
+        .windows(pattern.len())
+        .position(|w| w == pattern)
+        .unwrap_or_else(|| panic!("{:?} not found", String::from_utf8_lossy(pattern)))
+}
+fn replace(bytes: &[u8], from: &[u8], to: &[u8]) -> Vec<u8> {
+    assert_eq!(from.len(), to.len());
+    let at = find(bytes, from);
+    let mut out = bytes.to_vec();
+    out[at..at + to.len()].copy_from_slice(to);
+    out
+}
+/// Start of the record whose object name is `name`.
+fn record_start(bytes: &[u8], format: Format, name: &[u8]) -> usize {
+    match format {
+        Format::Binary => find(bytes, &[name, b"\0"].concat()) - 10,
+        Format::BinSafe => find(bytes, &[b"[", name, b" "].concat()) - 3,
+        Format::Ascii => find(bytes, &[b"[", name, b" "].concat()),
+    }
+}
+fn set_version(
+    bytes: &[u8],
+    format: Format,
+    name: &[u8],
+    class: &[u8],
+    from: u16,
+    to: u16,
+) -> Vec<u8> {
+    if format == Format::Binary {
+        let at = find(bytes, &[name, b"\0", class, b"\0"].concat()) - 6;
+        let mut out = bytes.to_vec();
+        assert_eq!(u16::from_le_bytes([out[at], out[at + 1]]), from);
+        out[at..at + 2].copy_from_slice(&to.to_le_bytes());
+        return out;
+    }
+    let text = |v: u16| {
+        [
+            b"[",
+            name,
+            b" ",
+            class,
+            b" ",
+            v.to_string().as_bytes(),
+            b" ",
+        ]
+        .concat()
+    };
+    replace(bytes, &text(from), &text(to))
+}
+/// Insert `filler` at `at`, inside the BINARY records named `enclosing`.
+fn insert(bytes: &[u8], format: Format, at: usize, filler: &[u8], enclosing: &[&[u8]]) -> Vec<u8> {
+    let mut out = bytes.to_vec();
+    let n = filler.len() as u32;
+    match format {
+        Format::Binary => {
+            for name in enclosing {
+                let start = record_start(bytes, format, name);
+                let length = u32::from_le_bytes(out[start..start + 4].try_into().unwrap());
+                out[start..start + 4].copy_from_slice(&(length + n).to_le_bytes());
+            }
+        }
+        Format::BinSafe => {
+            let pointer = find(bytes, b"END\n") + 4 + 8;
+            let table = u32::from_le_bytes(out[pointer..pointer + 4].try_into().unwrap());
+            out[pointer..pointer + 4].copy_from_slice(&(table + n).to_le_bytes());
+        }
+        Format::Ascii => {}
+    }
+    out.splice(at..at, filler.iter().copied());
+    out
+}
+/// A field where a child record is expected: invalid for the reader, skippable.
+fn stray_field(format: Format) -> &'static [u8] {
+    match format {
+        Format::Ascii => b"stray=int:1\n",
+        Format::BinSafe => &[18, 0, 0, 0, 0, 2, 1, 0, 0, 0],
+        Format::Binary => &[0, 0, 0, 0],
+    }
+}
+fn vob_links(d: &ObjectArchive) -> (Option<ObjectId>, Option<ObjectId>) {
+    let ObjectRef::Vob(v) = d.graph.get(d.graph.roots()[0].target.unwrap()).unwrap() else {
+        panic!("root VOB")
+    };
+    (
+        v.base().visual.as_ref().and_then(|l| l.target),
+        v.base().ai.as_ref().and_then(|l| l.target),
+    )
+}
+fn document(format: Format, game: GameVersion, save: bool, graph: Graph) -> ObjectArchive {
+    let mut metadata = Metadata::new(format);
+    metadata.save_game = save;
+    ObjectArchive {
+        metadata,
+        game,
+        graph,
+    }
+}
+/// A G1 VOB with a mesh visual and a camera AI, plus a second root referencing it.
+fn camera_ai_vob(format: Format) -> Vec<u8> {
+    use zenkit::vob::{Visual, VisualKind, Vob};
+    let mut graph = Graph::new().unwrap();
+    let mesh = graph
+        .insert(Object::Visual(Visual::new(VisualKind::Mesh)))
+        .unwrap();
+    let camera = graph
+        .insert(Object::Visual(Visual::new(VisualKind::Camera)))
+        .unwrap();
+    let mut vob = Vob::new(GameVersion::Gothic1);
+    vob.base.visual_name = Some(b"ROCK.3DS".to_vec());
+    vob.base.visual = Some(Link::new(b"visual".to_vec(), Some(mesh)));
+    vob.base.ai = Some(Link::new(b"ai".to_vec(), Some(camera)));
+    let id = graph.insert(Object::Vob(vob)).unwrap();
+    graph
+        .add_root(Link::new(b"root-vob".to_vec(), Some(id)))
+        .unwrap();
+    graph
+        .add_root(Link::new(b"again".to_vec(), Some(id)))
+        .unwrap();
+    document(format, GameVersion::Gothic1, false, graph)
+        .to_bytes(Limits::default())
+        .unwrap()
+}
+#[test]
+fn lenient_parse_skips_unknown_records_and_reads_unlisted_versions() {
+    let g1 = GameVersion::Gothic1;
+    for format in FORMATS {
+        let bytes = camera_ai_vob(format);
+        // The strict reader accepts a camera AI in the AI slot.
+        let read = ObjectArchive::from_bytes(&bytes, g1, Limits::default()).unwrap();
+        assert!(matches!(vob_links(&read), (Some(_), Some(_))));
+
+        // An unknown nested record is skipped whole; the record after it loads.
+        let unknown = replace(&bytes, b"zCMesh", b"zCMosh");
+        let error = ObjectArchive::from_bytes(&unknown, g1, Limits::default()).unwrap_err();
+        assert_eq!(error.kind, ErrorKind::Unsupported);
+        let parsed = lenient(&unknown, g1).unwrap();
+        assert!(matches!(vob_links(&parsed.value), (None, Some(_))));
+        assert_eq!(parsed.diagnostics.len(), 1);
+        assert_eq!(parsed.diagnostics[0].class, b"zCMosh");
+        assert_eq!(
+            parsed.diagnostics[0].kind,
+            DiagnosticKind::Skipped(SkipReason::UnknownClass)
+        );
+        assert!(parsed.is_lossy() && parsed.value.graph.is_lossy());
+        // Written back, the skipped record is gone and the output is strict-clean.
+        let written = parsed.value.to_bytes(Limits::default()).unwrap();
+        let reread = ObjectArchive::from_bytes(&written, g1, Limits::default()).unwrap();
+        assert!(matches!(vob_links(&reread), (None, Some(_))));
+
+        // A broken reference after an unrelated skip still fails.
+        let broken = match format {
+            Format::Binary => {
+                let at = find(&unknown, b"again\0") - 4;
+                let mut out = unknown.clone();
+                out[at..at + 4].copy_from_slice(&9u32.to_le_bytes());
+                out
+            }
+            _ => replace(&unknown, b"[again \xa7 0 0]", b"[again \xa7 0 9]"),
+        };
+        assert_eq!(
+            lenient(&broken, g1).unwrap_err().kind,
+            ErrorKind::UnresolvedReference
+        );
+
+        // A known class with an unlisted version is read with the game's layout
+        // and written back with its own version.
+        let unlisted = set_version(&bytes, format, b"root-vob", b"zCVob", 12289, 12290);
+        let error = ObjectArchive::from_bytes(&unlisted, g1, Limits::default()).unwrap_err();
+        assert_eq!(error.kind, ErrorKind::Unsupported);
+        let parsed = lenient(&unlisted, g1).unwrap();
+        assert!(matches!(vob_links(&parsed.value), (Some(_), Some(_))));
+        assert_eq!(
+            parsed.diagnostics[0].kind,
+            DiagnosticKind::ReadWithLayout {
+                layout: 12289,
+                complete: true
+            }
+        );
+        assert!(!parsed.is_lossy() && !parsed.value.graph.is_lossy());
+        let written = parsed.value.to_bytes(Limits::default()).unwrap();
+        assert_eq!(written, unlisted);
+
+        // An unknown root fails.
+        let root = replace(&bytes, b"zCVob", b"zCVox");
+        assert_eq!(lenient(&root, g1).unwrap_err().kind, ErrorKind::Unsupported);
+    }
+    // ASCII drops trailing fields of a record read with a fallback layout and
+    // writes it back with the layout's version; a root whose fields do not
+    // parse fails.
+    let unlisted = set_version(
+        &camera_ai_vob(Format::Ascii),
+        Format::Ascii,
+        b"root-vob",
+        b"zCVob",
+        12289,
+        12290,
+    );
+    let end = unlisted[..find(&unlisted, b"[again")]
+        .windows(2)
+        .rposition(|w| w == b"[]")
+        .unwrap();
+    let extra = insert(&unlisted, Format::Ascii, end, b"extra=int:7\n", &[]);
+    let parsed = lenient(&extra, g1).unwrap();
+    assert_eq!(
+        parsed.diagnostics[0].kind,
+        DiagnosticKind::ReadWithLayout {
+            layout: 12289,
+            complete: false
+        }
+    );
+    assert!(parsed.is_lossy());
+    let written = parsed.value.to_bytes(Limits::default()).unwrap();
+    assert!(ObjectArchive::from_bytes(&written, g1, Limits::default()).is_ok());
+    let header_end = find(&unlisted, b"[root-vob");
+    let header_end = header_end + find(&unlisted[header_end..], b"\n") + 1;
+    let bad = insert(&unlisted, Format::Ascii, header_end, b"bogus=int:1\n", &[]);
+    assert_eq!(lenient(&bad, g1).unwrap_err().kind, ErrorKind::InvalidData);
+}
+/// A VOB whose AI moves a second VOB, which a second root references.
+fn ai_move_vob(format: Format, game: GameVersion, save: bool) -> Vec<u8> {
+    use zenkit::vob::{AiMove, Item, ItemState, SaveState, Vob, VobKind};
+    let vob = |kind| {
+        let mut v = Vob::new(game);
+        v.base.physics_enabled = false;
+        v.base.state = save.then_some(SaveState::default());
+        v.kind = kind;
+        v
+    };
+    let mut graph = Graph::new().unwrap();
+    let moved = graph
+        .insert(Object::Vob(vob(if save {
+            VobKind::Item(Item {
+                instance: b"ITEM".to_vec(),
+                state: Some(ItemState {
+                    amount: 1,
+                    flags: 0,
+                }),
+            })
+        } else {
+            VobKind::Base
+        })))
+        .unwrap();
+    let ai = graph
+        .insert(Object::AiMove(AiMove {
+            vob: Link::new(b"moved".to_vec(), Some(moved)),
+            owner: Link::new(b"owner-link".to_vec(), None),
+        }))
+        .unwrap();
+    let mut root = vob(VobKind::Base);
+    root.base.ai = Some(Link::new(b"ai-link".to_vec(), Some(ai)));
+    let root = graph.insert(Object::Vob(root)).unwrap();
+    graph
+        .add_root(Link::new(b"root-vob".to_vec(), Some(root)))
+        .unwrap();
+    graph
+        .add_root(Link::new(b"again".to_vec(), Some(moved)))
+        .unwrap();
+    document(format, game, save, graph)
+        .to_bytes(Limits::default())
+        .unwrap()
+}
+fn second_root(d: &ObjectArchive) -> Option<ObjectId> {
+    d.graph.roots()[1].target
+}
+#[test]
+fn lenient_rollback_nulls_only_references_into_rolled_back_records() {
+    let g1 = GameVersion::Gothic1;
+    for format in FORMATS {
+        let bytes = ai_move_vob(format, g1, false);
+        let unlisted = set_version(&bytes, format, b"ai-link", b"oCAIVobMove", 0, 1);
+        let parsed = lenient(&unlisted, g1).unwrap();
+        assert!(second_root(&parsed.value).is_some());
+        assert_eq!(
+            parsed.diagnostics[0].kind,
+            DiagnosticKind::ReadWithLayout {
+                layout: 0,
+                complete: true
+            }
+        );
+
+        // A limit inside a record read with a fallback layout stays a hard error.
+        let limits = Limits {
+            nodes: 1,
+            ..Limits::default()
+        };
+        let options = ParseOptions::new(limits).tolerance(Tolerance::Lenient);
+        assert_eq!(
+            ObjectArchive::parse(&unlisted, g1, options)
+                .unwrap_err()
+                .kind,
+            ErrorKind::LimitExceeded
+        );
+
+        // The AI record's own children do not parse after its moved VOB was
+        // registered: the record is rolled back and skipped, and the later
+        // reference to the moved VOB reads as null.
+        let at = record_start(&unlisted, format, b"owner-link");
+        let broken = insert(
+            &unlisted,
+            format,
+            at,
+            stray_field(format),
+            &[b"ai-link", b"root-vob"],
+        );
+        assert!(ObjectArchive::from_bytes(&broken, g1, Limits::default()).is_err());
+        let parsed = lenient(&broken, g1).unwrap();
+        assert!(matches!(vob_links(&parsed.value), (None, None)));
+        assert_eq!(second_root(&parsed.value), None);
+        let kinds: Vec<_> = parsed.diagnostics.iter().map(|d| d.kind).collect();
+        assert_eq!(
+            kinds,
+            [
+                DiagnosticKind::Skipped(SkipReason::LayoutMismatch),
+                DiagnosticKind::NullReference
+            ]
+        );
+        assert!(parsed.diagnostics.iter().all(|d| d.class == b"oCAIVobMove"));
+        assert_eq!(parsed.value.graph.len(), 1);
+    }
+    // A BINARY save Item with an unlisted version and bytes left over is
+    // rolled back and skipped; its record length decides, not its flags suffix.
+    let g2 = GameVersion::Gothic2;
+    let bytes = ai_move_vob(Format::Binary, g2, true);
+    let unlisted = set_version(&bytes, Format::Binary, b"moved", b"oCItem:zCVob", 0, 1);
+    let start = record_start(&unlisted, Format::Binary, b"moved");
+    let end = start + u32::from_le_bytes(unlisted[start..start + 4].try_into().unwrap()) as usize;
+    let extra = insert(
+        &unlisted,
+        Format::Binary,
+        end,
+        &[0; 8],
+        &[b"moved", b"ai-link", b"root-vob"],
+    );
+    assert_eq!(
+        ObjectArchive::from_bytes(&extra, g2, Limits::default())
+            .unwrap_err()
+            .kind,
+        ErrorKind::Unsupported
+    );
+    let parsed = lenient(&extra, g2).unwrap();
+    assert_eq!(second_root(&parsed.value), None);
+    assert_eq!(parsed.diagnostics[0].class, b"oCItem:zCVob");
+    assert_eq!(
+        parsed.diagnostics[0].kind,
+        DiagnosticKind::Skipped(SkipReason::LayoutMismatch)
+    );
+}
+#[test]
+fn lenient_layouts_follow_the_game_and_required_edges_still_fail() {
+    use zenkit::{material::Material, vob::*};
+    // A G2 material of an unlisted version reads with the complete G2 layout.
+    let g2 = GameVersion::Gothic2;
+    let mut graph = Graph::new().unwrap();
+    let id = graph.insert(Object::Material(Material::new(g2))).unwrap();
+    graph
+        .add_root(Link::new(b"material".to_vec(), Some(id)))
+        .unwrap();
+    let bytes = document(Format::Ascii, g2, false, graph)
+        .to_bytes(Limits::default())
+        .unwrap();
+    let unlisted = set_version(
+        &bytes,
+        Format::Ascii,
+        b"material",
+        b"zCMaterial",
+        0x9c03,
+        0x9c04,
+    );
+    let parsed = lenient(&unlisted, g2).unwrap();
+    assert_eq!(
+        parsed.diagnostics[0].kind,
+        DiagnosticKind::ReadWithLayout {
+            layout: 0x9c03,
+            complete: true
+        }
+    );
+
+    // G1 camera frames of version 34560 read strictly.
+    let g1 = GameVersion::Gothic1;
+    let mut graph = Graph::new().unwrap();
+    let mut frame = Vob::new(g1);
+    frame.kind = VobKind::CameraFrame(CameraFrame {
+        version: 34560,
+        ..CameraFrame::new(g1)
+    });
+    let id = graph.insert(Object::Vob(frame)).unwrap();
+    graph
+        .add_root(Link::new(b"frame".to_vec(), Some(id)))
+        .unwrap();
+    let bytes = document(Format::Ascii, g1, false, graph)
+        .to_bytes(Limits::default())
+        .unwrap();
+    let read = ObjectArchive::from_bytes(&bytes, g1, Limits::default()).unwrap();
+    assert_eq!(read.to_bytes(Limits::default()).unwrap(), bytes);
+
+    // Only a camera visual may stand in the AI slot.
+    let mut graph = Graph::new().unwrap();
+    let mesh = graph
+        .insert(Object::Visual(Visual::new(VisualKind::Mesh)))
+        .unwrap();
+    let mut vob = Vob::new(g1);
+    vob.base.ai = Some(Link::new(b"ai".to_vec(), Some(mesh)));
+    let id = graph.insert(Object::Vob(vob)).unwrap();
+    graph
+        .add_root(Link::new(b"root".to_vec(), Some(id)))
+        .unwrap();
+    let error = document(Format::Ascii, g1, false, graph)
+        .to_bytes(Limits::default())
+        .unwrap_err();
+    assert_eq!(error.kind, ErrorKind::WrongObjectType);
+
+    // A skipped child of a block, which requires its child, fails the block.
+    for format in FORMATS {
+        let mut graph = Graph::new().unwrap();
+        let atomic = graph
+            .insert(Object::Atomic(AtomicBlock::default()))
+            .unwrap();
+        let block = graph
+            .insert(Object::Block(CutsceneBlock {
+                child: Link::new(b"atomic".to_vec(), Some(atomic)),
+                ..Default::default()
+            }))
+            .unwrap();
+        graph
+            .add_root(Link::new(b"block".to_vec(), Some(block)))
+            .unwrap();
+        let bytes = document(format, g2, false, graph)
+            .to_bytes(Limits::default())
+            .unwrap();
+        let unknown = replace(&bytes, b"zCCSAtomicBlock", b"zCCSAtomicBlocX");
+        assert!(ObjectArchive::from_bytes(&unknown, g2, Limits::default()).is_err());
+        assert_eq!(
+            lenient(&unknown, g2).unwrap_err().kind,
+            ErrorKind::InvalidData
+        );
+    }
+}
+#[test]
+fn lenient_world_keeps_vob_tree_aligned_around_a_skipped_vob() {
+    use zenkit::vob::{Vob, VobKind};
+    use zenkit::world::{Hierarchy, HierarchyEntry, Section, SectionData, SectionFrame, World};
+    let game = GameVersion::Gothic2;
+    for format in FORMATS {
+        let mut graph = Graph::new().unwrap();
+        let world = graph
+            .insert(Object::World(World::new(game, false)))
+            .unwrap();
+        let mut spot = Vob::new(game);
+        spot.kind = VobKind::Spot;
+        let spot = graph.insert(Object::Vob(spot)).unwrap();
+        let child = graph.insert(Object::Vob(Vob::new(game))).unwrap();
+        let ObjectMut::World(w) = graph.get_mut(world).unwrap() else {
+            unreachable!()
+        };
+        w.sections = vec![
+            Section {
+                frame: SectionFrame::default(),
+                data: SectionData::VobTree(Hierarchy {
+                    root_count_name: Some(b"childs0".to_vec()),
+                    entries: vec![
+                        HierarchyEntry {
+                            object: Link::new(b"spot".to_vec(), Some(spot)),
+                            parent: None,
+                            children_name: Some(b"childs0".to_vec()),
+                        },
+                        HierarchyEntry {
+                            object: Link::new(b"child".to_vec(), Some(child)),
+                            parent: Some(0),
+                            children_name: Some(b"childs1".to_vec()),
+                        },
+                    ],
+                }),
+            },
+            Section {
+                frame: SectionFrame::default(),
+                data: SectionData::End,
+            },
+        ];
+        graph
+            .add_root(Link::new(b"world".to_vec(), Some(world)))
+            .unwrap();
+        let bytes = document(format, game, false, graph)
+            .to_bytes(Limits::default())
+            .unwrap();
+        let unknown = replace(&bytes, b"zCVobSpot:", b"zCVobSpox:");
+        let parsed = lenient(&unknown, game).unwrap();
+        let ObjectRef::World(w) = parsed
+            .value
+            .graph
+            .get(parsed.value.graph.roots()[0].target.unwrap())
+            .unwrap()
+        else {
+            panic!("world root")
+        };
+        let SectionData::VobTree(tree) = &w.sections[0].data else {
+            panic!("VOB tree")
+        };
+        assert_eq!(tree.entries.len(), 2);
+        assert_eq!(tree.entries[0].object.target, None);
+        assert_eq!(tree.entries[1].parent, Some(0));
+        assert!(tree.entries[1].object.target.is_some());
+    }
+}

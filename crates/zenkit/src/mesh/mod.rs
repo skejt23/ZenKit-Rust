@@ -125,6 +125,7 @@ impl Default for Limits {
         }
     }
 }
+#[derive(Clone, Copy)]
 pub(crate) struct Budget<'a> {
     pub(crate) limits: Limits,
     pub(crate) owned: usize,

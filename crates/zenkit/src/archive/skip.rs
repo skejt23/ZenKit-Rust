@@ -192,7 +192,7 @@ impl<'a> Reader<'a> {
     /// without advancing. BINARY requires the caller to know an object follows.
     /// Opaque BINARY descendants cannot be counted or schema-validated.
     pub fn skip_next_object(&mut self, limits: SkipLimits) -> Result<Option<ObjectHeader<'a>>> {
-        self.skip_object_impl(false, limits)
+        self.skip_object_impl(false, limits, &mut |_| Ok(()))
     }
     /// Skip the remainder of the current object and close it. Errors preserve
     /// cursor, frame stack and record count. No graph identities are registered.
@@ -200,12 +200,27 @@ impl<'a> Reader<'a> {
         if self.ends.is_empty() {
             return Err(invalid(self.position()));
         }
-        self.skip_object_impl(true, limits).map(|_| ())
+        self.skip_object_impl(true, limits, &mut |_| Ok(()))
+            .map(|_| ())
+    }
+    /// Like [`Self::skip_current_object`], calling `visit` with the header of
+    /// every nested record in tagged formats. BINARY nested records are opaque
+    /// and not visited. A `visit` error aborts the skip with state unchanged.
+    pub(crate) fn skip_current_object_visiting(
+        &mut self,
+        limits: SkipLimits,
+        visit: &mut dyn FnMut(&ObjectHeader<'a>) -> Result<()>,
+    ) -> Result<()> {
+        if self.ends.is_empty() {
+            return Err(invalid(self.position()));
+        }
+        self.skip_object_impl(true, limits, visit).map(|_| ())
     }
     fn skip_object_impl(
         &mut self,
         current: bool,
         limits: SkipLimits,
+        visit: &mut dyn FnMut(&ObjectHeader<'a>) -> Result<()>,
     ) -> Result<Option<ObjectHeader<'a>>> {
         let p = self.position();
         if limits.steps == 0 {
@@ -281,6 +296,7 @@ impl<'a> Reader<'a> {
                     if existing + depth >= self.limits.depth || records >= self.limits.objects {
                         return Err(limited(at));
                     }
+                    visit(&h)?;
                     if !current && depth == 0 {
                         first = Some(h);
                     }
